@@ -1,0 +1,6 @@
+requests>=2.31.0
+ddddocr>=1.5.5
+pillow>=10.0.0
+win11toast>=0.35
+python-dotenv>=1.0.0
+beautifulsoup4>=4.12.0

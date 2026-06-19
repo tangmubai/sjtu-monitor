@@ -1,0 +1,13 @@
+.env
+state.json
+swap_state.json
+*.log
+captcha_debug/
+__pycache__/
+*.pyc
+.venv/
+venv/
+.claude/
+.codex/
+.agents/
+i.sjtu.edu.cn.har

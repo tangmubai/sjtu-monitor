@@ -1,0 +1,202 @@
+# 交我选
+
+### 免责声明：本项目仅用于监控上海交通大学 i.sjtu.edu.cn 推荐选课页面的教学班数据（已选/容量）并在数据发生变化时通过 Windows 桌面通知和电子邮件发送告警。项目不具备也不应被用于自动抢课、批量代选、或绕过学校或第三方服务的任何访问控制或风控措施。作者已尽力提供正确的实现，但不对因使用本项目或基于本项目的二次开发所导致的任何直接、间接、附带、特殊或衍生性损失承担责任，包括但不限于数据丢失、账户封禁、校纪处分、法律责任或其他经济损失。在适用法律允许的最大范围内，作者对因使用本软件而产生的所有责任均予以否认。
+
+## 项目简介
+本项目主要实现监控上海交通大学 `i.sjtu.edu.cn` 推荐选课页面中的指定教学班。人数或容量变化时，程序会写入日志，并通过 Windows 桌面通知和可选的 SMTP 邮件告警。
+
+## 环境要求
+
+- Python 3.10 或更高版本
+- Windows 10/11（桌面通知依赖 `win11toast`；其他系统仍可使用日志和邮件）
+- 可正常访问交我办与 jAccount
+
+## 安装
+
+```powershell
+git clone https://github.com/tangmubai/sjtu-monitor.git
+cd sjtu-monitor
+
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+
+Copy-Item .env.example .env
+notepad .env
+```
+
+`.env` 至少需要填写：
+
+```dotenv
+JACCOUNT_USER=your_jaccount_id
+JACCOUNT_PASS=your_password
+```
+
+邮件是可选的。留空 `SMTP_HOST`、`SMTP_USER` 或 `SMTP_PASS` 时，程序会跳过邮件发送。
+
+```dotenv
+SMTP_HOST=smtp.qq.com
+SMTP_PORT=465
+SMTP_USER=youraddress@qq.com
+SMTP_PASS=your_smtp_authorization_code
+MAIL_FROM=youraddress@qq.com
+MAIL_TO=youraddress@qq.com
+
+POLL_MIN=60
+POLL_MAX=120
+```
+
+`SMTP_PASS` 应填写邮箱服务商生成的 SMTP 授权码，而不是邮箱登录密码。
+
+## 配置监控课程
+
+课程、教学班及学期参数均在 `config.py` 中配置。这些值来自选课页面的实际请求，学期或个人信息变化后需要重新核对。
+
+### 1. 查询课程
+
+在 `KCH_QUERIES` 中为每门课程配置查询方式：
+
+```python
+KCH_QUERIES = {
+    "MATH1206": {
+        "endpoint": "display",
+        "kch_id": "MA1206",
+        "jxb_id": "用于查询该课程的教学班 ID",
+    },
+    "PE003C20": {
+        "endpoint": "pe",
+        "kch_id": "PE003C20",
+    },
+}
+```
+
+- `display`：普通课程，使用 `DISPLAY_URL`。
+- `pe`：体育课程，使用 `JXB_LIST_URL`。
+- `_DISPLAY_COMMON` 和 `_PE_COMMON` 中的学年、学期、专业等参数必须与当前账号一致。
+
+可运行以下命令查看当前已选课程及其 `jxb_id`：
+
+```powershell
+python test_choosed.py
+```
+
+### 2. 设置优先级
+
+`PRIORITY_GROUPS` 中每组的 `priority` 按“最想要”到“当前持有”排列，最后一项是程序启动时认为已持有的教学班：
+
+```python
+PRIORITY_GROUPS = {
+    "MATH": {
+        "is_pe": False,
+        "priority": [
+            "最高优先级教学班 ID",
+            "次高优先级教学班 ID",
+            "当前持有教学班 ID",
+        ],
+    },
+}
+```
+
+程序只监控当前持有项之前的教学班，因此只会向更高优先级升级。自动换班成功后，结果记录在 `swap_state.json`，后续轮询会以已成功目标作为新的持有项，并缩小监控范围。
+
+修改优先级或实际持有课程后，应删除旧的 `swap_state.json`，否则历史成功记录可能影响监控范围。
+
+## 运行
+
+单次拉取，用于验证登录和接口配置：
+
+```powershell
+python monitor.py --once
+```
+
+持续轮询：
+
+```powershell
+python monitor.py
+```
+
+显示详细日志：
+
+```powershell
+python monitor.py --debug
+```
+
+首次运行只建立 `state.json` 快照，不会发送普通变更通知。后续轮询会比较人数、容量、剩余名额以及教学班新增/移除情况；检测到 `jxbxzrs < jxbrl` 时会额外发送空位告警。若已显式开启自动换班，程序从首轮起就会检查所有当前有空位的高优先级目标，而不是只等待一次“满员变为空闲”的状态变化。
+
+## 自动换班
+
+自动换班默认关闭。仅需告警时，请保持：
+
+```python
+AUTO_SWAP = False
+```
+
+推荐先演练：
+
+```python
+AUTO_SWAP = True
+AUTO_SWAP_DRY_RUN = True
+```
+
+换班目标和退选班级由 `PRIORITY_GROUPS` 动态决定，无需额外维护映射。同一组同时有多个班空出时只选择优先级最高的一项；升级成功后，低优先级班将不再被监控或触发退选。
+
+确认日志中的目标、退选班级和体育课标记均正确后，才可将 `AUTO_SWAP_DRY_RUN` 改为 `False`。真实流程会先退当前课程，再重试选择目标课程；若失败会尝试选回旧课，但旧课也可能无法选回。`swap_state.json` 中的 `fatal_groups` 表示需要立即人工处理，该组会暂停自动操作。
+
+`swap.py` 还提供手动调试命令。先使用 `--dry-run`，真实请求必须显式添加 `--yes`：
+
+```powershell
+python swap.py select <jxb_id> --dry-run
+python swap.py select <jxb_id> --pe --dry-run
+python swap.py swap <drop_jxb_id> <select_jxb_id> --dry-run
+```
+
+注意：`swap.py swap` 是“先选后退”的手动调试流程；监控器的自动换班使用 `drop_then_select`，是“先退后选”。
+
+## 工作原理
+
+1. `login.py` 访问 jAccount 登录入口，解析登录字段并使用 `ddddocr` 识别验证码。
+2. `monitor.py` 按 `KCH_QUERIES` 拉取普通课和体育课教学班，并按 `jxb_id` 去重。
+3. 程序将完整快照写入 `state.json`，但只对当前优先级范围内的教学班产生通知。
+4. 会话失效时自动重新登录；网络错误按最长 10 分钟退避后重试。
+5. 每轮成功后在 `POLL_MIN` 到 `POLL_MAX` 秒之间随机等待。
+
+## 生成文件
+
+| 文件或目录 | 用途 |
+|---|---|
+| `state.json` | 最近一次完整教学班快照 |
+| `changes.log` | 检测到的变更及自动换班结果 |
+| `swap_state.json` | 已完成和致命失败的自动换班目标 |
+| `captcha_debug/` | 登录调试时保存的验证码图片 |
+
+这些文件以及 `.env` 均不应提交到版本库。
+
+## 常见问题
+
+- **首轮没有通知**：这是预期行为，首轮只创建基准快照。
+- **登录失败**：用 `python monitor.py --debug` 查看状态码和 OCR 日志，确认 jAccount 密码及验证码识别结果。
+- **登录成功但课程为空**：核对 `xkxnm`、`xkxqm`、`zyh_id`、`kch_id`、查询用 `jxb_id` 和接口类型。
+- **一直没有空位告警**：确认接口返回的 `jxbxzrs` 与 `jxbrl` 是当前阶段实际使用的人数和容量字段。
+- **Windows 通知不显示**：检查系统通知权限；邮件和 `changes.log` 不受影响。
+- **程序持续重登录**：通常表示接口重定向、参数过期或返回了非 JSON 页面，可用 `--debug` 查看响应摘要。
+
+## 后台运行
+
+可以在 Windows 任务计划程序中使用虚拟环境解释器启动：
+
+```text
+C:\path\to\sjtu-monitor\.venv\Scripts\pythonw.exe C:\path\to\sjtu-monitor\monitor.py
+```
+
+将“起始于”设置为项目目录，便于定位日志和状态文件。
+
+## 提示
+
+- 当前仓库中的课程参数和教学班 ID 与具体账号、学期相关，不适合作为通用默认值。
+- 不要把轮询间隔设得过短；频繁请求可能触发限制或影响服务。
+- 除非你直到自己在做什么，请保持```AUTO_SWAP = False```
+
+## 许可证
+
+本项目采用 [MIT License](LICENSE)。
+您可以自由使用、修改和分发本项目代码，但必须保留原版权声明和许可证文本。
