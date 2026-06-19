@@ -123,35 +123,6 @@ python monitor.py --debug
 
 首次运行只建立 `state.json` 快照，不会发送普通变更通知。后续轮询会比较人数、容量、剩余名额以及教学班新增/移除情况；检测到 `jxbxzrs < jxbrl` 时会额外发送空位告警。若已显式开启自动换班，程序从首轮起就会检查所有当前有空位的高优先级目标，而不是只等待一次“满员变为空闲”的状态变化。
 
-## 自动换班
-
-自动换班默认关闭。仅需告警时，请保持：
-
-```python
-AUTO_SWAP = False
-```
-
-推荐先演练：
-
-```python
-AUTO_SWAP = True
-AUTO_SWAP_DRY_RUN = True
-```
-
-换班目标和退选班级由 `PRIORITY_GROUPS` 动态决定，无需额外维护映射。同一组同时有多个班空出时只选择优先级最高的一项；升级成功后，低优先级班将不再被监控或触发退选。
-
-确认日志中的目标、退选班级和体育课标记均正确后，才可将 `AUTO_SWAP_DRY_RUN` 改为 `False`。真实流程会先退当前课程，再重试选择目标课程；若失败会尝试选回旧课，但旧课也可能无法选回。`swap_state.json` 中的 `fatal_groups` 表示需要立即人工处理，该组会暂停自动操作。
-
-`swap.py` 还提供手动调试命令。先使用 `--dry-run`，真实请求必须显式添加 `--yes`：
-
-```powershell
-python swap.py select <jxb_id> --dry-run
-python swap.py select <jxb_id> --pe --dry-run
-python swap.py swap <drop_jxb_id> <select_jxb_id> --dry-run
-```
-
-注意：`swap.py swap` 是“先选后退”的手动调试流程；监控器的自动换班使用 `drop_then_select`，是“先退后选”。
-
 ## 工作原理
 
 1. `login.py` 访问 jAccount 登录入口，解析登录字段并使用 `ddddocr` 识别验证码。
