@@ -165,7 +165,7 @@ C:\path\to\sjtu-monitor\.venv\Scripts\pythonw.exe C:\path\to\sjtu-monitor\monito
 
 - 当前仓库中的课程参数和教学班 ID 与具体账号、学期相关，不适合作为通用默认值。
 - 不要把轮询间隔设得过短；频繁请求可能触发限制或影响服务。
-- 除非你直到自己在做什么，请保持```AUTO_SWAP = False```
+- 除非你知道自己在做什么，请保持```AUTO_SWAP = False```
 
 ## 许可证
 
