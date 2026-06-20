@@ -91,10 +91,21 @@ def login(session: requests.Session, max_attempts: int = 5) -> None:
         log.info("session 仍有效,跳过登录")
         return
 
+    # session 已确认失效 — 清空所有旧 cookie 再启新登录流程。
+    # 不清的话,旧的 JSESSIONID / OAuth state 会让 /jaccountlogin 走异常分支,
+    # 导致重登录永远失败(冷启动正常,因为 session 本来就是空的)。
+    old_cookies = len(session.cookies)
+    if old_cookies:
+        log.info("清理 %d 个旧 cookie,重置 session", old_cookies)
+        session.cookies.clear()
+
     # 1. 触发 i.sjtu.edu.cn → jaccount 重定向
     r = session.get(config.JACCOUNT_ENTRY_URL, allow_redirects=True, timeout=20)
     if "jaccount.sjtu.edu.cn" not in r.url:
-        raise LoginError(f"未跳转到 jaccount,最终 URL: {r.url}")
+        raise LoginError(
+            f"未跳转到 jaccount,最终 URL: {r.url} "
+            f"(status={r.status_code} bytes={len(r.content)})"
+        )
     login_page_url = r.url
     ctx = _parse_login_context(r.text)
     required = {"sid", "client", "returl", "se", "uuid"}
