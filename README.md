@@ -121,6 +121,14 @@ python monitor.py
 python monitor.py --debug
 ```
 
+图形界面：
+
+```powershell
+python gui.py
+```
+
+`gui.py` 是基于 PySide6/Qt 的本地桌面窗口，支持运行监控、查看课程快照与日志，并通过“课程目录 → 选课方案 → 优先级”流程配置教学班。界面保存的个性化设置写入 `user_settings.json`，不会改写 `config.py`，也不会清空现有 `swap_state.json`。
+
 首次运行只建立 `state.json` 快照，不会发送普通变更通知。后续轮询会比较人数、容量、剩余名额以及教学班新增/移除情况；检测到 `jxbxzrs < jxbrl` 时会额外发送空位告警。若已显式开启自动换班，程序从首轮起就会检查所有当前有空位的高优先级目标，而不是只等待一次“满员变为空闲”的状态变化。
 
 ## 工作原理

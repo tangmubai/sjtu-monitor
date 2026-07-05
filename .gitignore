@@ -1,6 +1,9 @@
 .env
 state.json
 swap_state.json
+priority_groups.json
+user_settings.json
+catalog.json
 *.log
 captcha_debug/
 __pycache__/
@@ -11,3 +14,8 @@ venv/
 .codex/
 .agents/
 i.sjtu.edu.cn.har
+i.sjtu.edu.cn_*.har
+.idea/
+CLAUDE.md
+AGENTS.md
+.vscode/

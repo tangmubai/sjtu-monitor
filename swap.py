@@ -47,7 +47,7 @@ def drop_course(
 ) -> tuple[bool, str]:
     """退选。成功:服务端返回字符串 '1'。"""
     data = {
-        "xkxnm": "2026", "xkxqm": "3",
+        "xkxnm": config.XKXNM, "xkxqm": config.XKXQM,
         "jxb_ids": jxb_id, "txbsfrl": "1",
     }
     log.info("[退选] jxb_id=%s data=%s", jxb_id, data)
