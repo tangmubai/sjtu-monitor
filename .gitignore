@@ -4,6 +4,8 @@ swap_state.json
 priority_groups.json
 user_settings.json
 catalog.json
+zzxk_capacity.json
+seat_details.json
 *.log
 captcha_debug/
 __pycache__/

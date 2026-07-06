@@ -55,14 +55,26 @@ def _parse_login_context(html: str) -> dict[str, str]:
 
 
 def _is_logged_in(session: requests.Session) -> bool:
-    """探针:任选一门已知课程查询,返回 JSON 即为登录有效。"""
-    # 用 KCH_QUERIES 里的第一门课构造一次查询
-    kch = next(iter(config.KCH_QUERIES.keys()))
-    qp = config.build_query_payload(kch)
-    if qp is None:
-        return False
-    url, payload = qp
+    """探针:任选一门 tjxkbkk 课程查询,返回 JSON 即为登录有效。
+
+    zzxk 轮次的课程没有单课查询模板(build_query_payload 返回 None),跳过;
+    全部课程都是 zzxk 时退回 GET 选课首页(未登录会 302)。
+    """
+    qp = None
+    for kch in config.KCH_QUERIES:
+        qp = config.build_query_payload(kch)
+        if qp is not None:
+            break
     try:
+        if qp is None:
+            r = session.get(
+                config.PAGE_URL,
+                headers={"User-Agent": config.USER_AGENT},
+                timeout=10,
+                allow_redirects=False,
+            )
+            return r.status_code == 200
+        url, payload = qp
         r = session.post(
             url,
             data=payload,

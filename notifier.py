@@ -30,6 +30,16 @@ def _format_change_line(c: dict) -> str:
         return f"[新增] {jxb} {name}"
     if kind == "removed":
         return f"[移除] {jxb} {name}"
+    if kind == "conflict_skipped":
+        return (
+            f"⏭️ [跳过换课-时间冲突] {jxb} {name} — "
+            f"与「{c.get('conflict_group', '?')}」组当前持有课程冲突: {c.get('detail', '')}"
+        )
+    if kind == "schedule_unknown_skip":
+        return (
+            f"⏭️ [跳过换课-时间未知] {jxb} {name} — "
+            "无法确认与其他方案组是否时间冲突,已保守跳过"
+        )
     labels = {
         "yxzrs": "已选", "xzzrs": "选中", "cxrs": "抽选人数",
         "jxbrs": "班人数", "jxbxzrs": "班选中",
@@ -52,6 +62,9 @@ def _toast(title: str, body: str) -> None:
 
 
 def _email(subject: str, body_lines: Sequence[str]) -> None:
+    if not config.EMAIL_ENABLED:
+        log.info("邮件通知已关闭")
+        return
     if not (config.SMTP_HOST and config.SMTP_USER and config.SMTP_PASS):
         log.info("SMTP 未配置,跳过邮件")
         return

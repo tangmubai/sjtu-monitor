@@ -1,27 +1,24 @@
 """初始化向导:自动抓取选课所需的用户信息、课程目录和已选课程。
 
 用法:
-  python bootstrap.py                # 全流程:用户信息 + 课程目录 + 已选课程
+  python bootstrap.py                 # 全流程:用户信息 + 全量课程目录 + 已选课程
   python bootstrap.py --debug
-  python bootstrap.py --skip-catalog # 只抓用户信息和已选,不抓课程目录
+  python bootstrap.py --skip-catalog  # 只抓用户信息和已选,不抓课程目录
+  python bootstrap.py --with-capacity # 目录附带容量/教师/时间(逐课多查一次,慢)
 
 产出:
   1. user_settings.json 的 query_overrides / term 分区 —— 个人查询参数自动填充,
      新用户无需再从 HAR 手工提取 zyh_id / njdm_id 等字段;
-  2. catalog.json —— 可选课程目录(课程 + 教学班)及当前已选课程,
+  2. catalog.json —— 全量课程目录(课程 + 教学班)及当前已选课程,
      供 GUI"选课设置"页选择监控目标、排优先级。
 
-数据来源(与 HAR 抓包对照):
-  - 选课首页 PAGE_URL 的 hidden input        → 个人查询参数、选课学年学期
-  - kbcx/xskbcx_cxXsgrkb (个人课表)         → zyh_id / njdm_id / 姓名学号 (已验证)
-  - xsxk/..._cxTjxkBkkDisplay 空 kch_id 查询 → 全部普通课程及教学班
-  - xsxk/..._cxJxbTjxkBkk 空 kch_id 查询     → 全部体育课教学班
-  - xsxk/..._cxTjxkBkkChoosedCourse          → 当前已选课程 (test_choosed.py 已验证)
-
-⚠ 以下行为在当前网络环境无法实测,首次在校园网运行请加 --debug 观察:
-  - 选课首页 hidden input 是否包含全部个人参数
-  - display / pe 接口空 kch_id 查询是否返回全部课程(还是要求必填)
-  - cxXsgrkb 用空 xnm/xqm 参数是否默认返回当前学期
+数据来源(2026-07-06 联网实测):
+  - 选课首页 PAGE_URL 的 hidden input   → 个人查询参数、选课学年学期
+  - kbcx/xskbcx_cxXsgrkb (个人课表)     → zyh_id / njdm_id / 姓名学号
+  - zzxkyzb 自主选课模块 (zzxk.py)      → 全部非体育课程目录(主修/通识/公选/任选/交叉)
+    ⚠ tjxkbkk display 空 kch_id 查询实测不返回数据,已弃用该目录来源
+  - xsxk/..._cxJxbTjxkBkk 空 kch_id     → 体育课目录(tjxkbkk,保留原接口)
+  - tjxkbkk ChoosedCourse + zzxkyzb ChoosedDisplay → 两个轮次的当前已选
 """
 from __future__ import annotations
 
@@ -34,6 +31,7 @@ from datetime import datetime
 import requests
 
 import config
+import zzxk
 from login import login
 
 log = logging.getLogger("bootstrap")
@@ -55,8 +53,9 @@ _NON_PERSONAL_KEYS = {"kch_id", "jxb_id", "kklxdm", "bklx_id", "xkxnm", "xkxqm"}
 
 # catalog.json 里每个教学班保留的字段(全量字段太大,只留展示和监控要用的)
 _CLASS_FIELDS = (
-    "jxb_id", "jxbmc", "kch", "kcmc", "jxbrl", "jxbxzrs", "yxzrs",
-    "jsxx", "sksj", "jxdd", "xf", "kcxzmc", "kklxdm",
+    "jxb_id", "jxbmc", "kch", "kcmc",
+    "jsxx", "sksj", "jxdd", "xf", "jxbxf", "kcxzmc", "kklxdm", "kzmc",
+    "cxbj", "fxbj", "xxkbj",
 )
 
 
@@ -88,20 +87,33 @@ def fetch_page_params(session: requests.Session) -> dict[str, str]:
     return params
 
 
-def fetch_xsxx(session: requests.Session) -> dict:
-    """个人课表接口的 xsxx 块:ZYH_ID/NJDM_ID/XM/XH/BJMC/ZYMC。"""
-    r = session.post(
-        config.XSGRKB_URL,
-        data={"xnm": "", "xqm": "", "kzlx": "ck"},
-        headers=_HEADERS, timeout=15, allow_redirects=False,
-    )
-    if "application/json" not in r.headers.get("content-type", ""):
-        raise RuntimeError(f"cxXsgrkb 非 JSON 响应: status={r.status_code}")
-    xsxx = r.json().get("xsxx") or {}
-    if xsxx:
-        log.info("[身份] %s (%s) %s %s",
-                 xsxx.get("XM"), xsxx.get("XH"), xsxx.get("BJMC"), xsxx.get("ZYMC"))
-    return xsxx
+def fetch_xsxx(
+    session: requests.Session, term: tuple[str, str] | None = None
+) -> dict:
+    """个人课表接口的 xsxx 块:ZYH_ID/NJDM_ID/XM/XH/BJMC/ZYMC。
+
+    实测(2026-07):空学年学期服务端返回 null,须带当前学期重试;
+    学期提示 term=(xnm, xqm) 可取自 zzxk 首页 hidden 的 xkxnm/xkxqm。
+    """
+    variants: list[dict] = [{"xnm": "", "xqm": "", "kzlx": "ck"}]
+    if term and term[0]:
+        variants.append({"xnm": term[0], "xqm": term[1] or "", "kzlx": "ck"})
+    for data in variants:
+        r = session.post(
+            config.XSGRKB_URL, data=data,
+            headers=_HEADERS, timeout=15, allow_redirects=False,
+        )
+        if "application/json" not in r.headers.get("content-type", ""):
+            raise RuntimeError(f"cxXsgrkb 非 JSON 响应: status={r.status_code}")
+        payload = r.json()
+        xsxx = (payload or {}).get("xsxx") or {}
+        if xsxx:
+            log.info("[身份] %s (%s) %s %s",
+                     xsxx.get("XM"), xsxx.get("XH"),
+                     xsxx.get("BJMC"), xsxx.get("ZYMC"))
+            return xsxx
+        log.debug("cxXsgrkb 参数 %s 返回空,尝试下一组", data)
+    return {}
 
 
 def fetch_choosed(session: requests.Session) -> list[dict]:
@@ -122,45 +134,42 @@ def fetch_choosed(session: requests.Session) -> list[dict]:
     return result if isinstance(result, list) else []
 
 
-def _slim_class(cls: dict) -> dict:
-    return {k: cls.get(k) for k in _CLASS_FIELDS if cls.get(k) is not None}
+def _to_int(value) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
-def fetch_display_catalog(session: requests.Session) -> list[dict]:
-    """空 kch_id 查询 display 接口,返回课程目录(课程含其教学班列表)。"""
-    payload = {**config.query_common("display"), "kch_id": "", "jxb_id": ""}
-    r = session.post(
-        config.DISPLAY_URL, data=payload, headers=_HEADERS,
-        timeout=30, allow_redirects=False,
-    )
-    if "application/json" not in r.headers.get("content-type", ""):
-        raise RuntimeError(f"display 目录查询非 JSON 响应: status={r.status_code}")
-    data = r.json()
-    tmp = data.get("tmpList") if isinstance(data, dict) else None
-    if not tmp or len(tmp) < 2:
-        log.warning("[目录] display 空查询未返回 tmpList,可能接口要求必填 kch_id")
-        return []
-    course_rows, class_rows = tmp[0] or [], tmp[1] or []
-    by_kch: dict[str, dict] = {}
-    for c in course_rows:
-        kch = c.get("kch")
-        if not kch:
-            continue
-        by_kch[kch] = {
-            "kch": kch,
-            "kch_id": c.get("kch_id"),
-            "kcmc": c.get("kcmc"),
-            "kklxdm": c.get("kklxdm"),
-            "xf": c.get("xf"),
-            "endpoint": "display",
-            "classes": [],
-        }
-    for cls in class_rows:
-        course = by_kch.get(cls.get("kch"))
-        if course is not None:
-            course["classes"].append(_slim_class(cls))
-    log.info("[目录] display: %d 门课程 / %d 个教学班", len(by_kch), len(class_rows))
-    return list(by_kch.values())
+def availability_from_row(row: dict) -> str:
+    selected = _to_int(row.get("jxbxzrs", row.get("yxzrs")))
+    capacity = _to_int(row.get("jxbrl"))
+    if selected is None or capacity is None or capacity <= 0:
+        return "unknown"
+    return "open" if selected < capacity else "full"
+
+
+def _slim_class(cls: dict, *, include_availability: bool = True) -> dict:
+    out = {k: cls.get(k) for k in _CLASS_FIELDS if cls.get(k) is not None}
+    if include_availability:
+        out["availability"] = availability_from_row(cls)
+    return out
+
+
+def fetch_zzxk_catalog(
+    session: requests.Session, with_capacity: bool = False
+) -> list[dict]:
+    """经 zzxkyzb 模块抓全量非体育课程目录(联网实测可用)。
+
+    zzxk.fetch_full_catalog 已做 yxzrs→jxbxzrs 归一化;这里再走 _slim_class
+    统一裁剪字段,保证 catalog.json 里 pe/zzxk 两来源的教学班结构一致。
+    """
+    # 目录没有独立空位接口:PartDisplay 给人数,JxbWithKch 给容量。
+    # 两者只在内存中比较,原始数字不写 catalog.json。
+    courses = zzxk.fetch_full_catalog(session, with_capacity=True)
+    for course in courses:
+        course["classes"] = [_slim_class(c) for c in course["classes"]]
+    return courses
 
 
 def fetch_pe_catalog(session: requests.Session) -> list[dict]:
@@ -175,7 +184,24 @@ def fetch_pe_catalog(session: requests.Session) -> list[dict]:
     data = r.json()
     class_rows = data if isinstance(data, list) else []
     if not class_rows:
-        log.warning("[目录] pe 空查询未返回数据,可能接口要求必填 kch_id")
+        # 实测(2026-07): 空 kch_id 不返回数据 → 回退为逐课查询已配置的体育课
+        # (仍是同一 cxJxbTjxkBkk 接口,保持体育课接口不变)
+        log.info("[目录] pe 空查询无数据,回退为逐课查询已配置体育课")
+        for kch, q in config.KCH_QUERIES.items():
+            if q.get("endpoint") != "pe":
+                continue
+            qp = config.build_query_payload(kch)
+            if qp is None:
+                continue
+            url, per_payload = qp
+            resp = session.post(url, data=per_payload, headers=_HEADERS,
+                                timeout=15, allow_redirects=False)
+            if "application/json" in resp.headers.get("content-type", ""):
+                rows = resp.json()
+                if isinstance(rows, list):
+                    class_rows += rows
+    if not class_rows:
+        log.warning("[目录] pe 目录为空(该轮次可能未开放)")
         return []
     by_kch: dict[str, dict] = {}
     for cls in class_rows:
@@ -236,16 +262,26 @@ def apply_user_info(page_params: dict[str, str], xsxx: dict) -> None:
              len(display_over), len(pe_over), term or "(未变)")
 
 
-def run(session: requests.Session, skip_catalog: bool = False) -> dict:
+def run(
+    session: requests.Session,
+    skip_catalog: bool = False,
+    with_capacity: bool = False,
+) -> dict:
     """执行初始化流程,返回 catalog dict(同时写盘)。每步失败不阻断后续。"""
     page_params: dict[str, str] = {}
     xsxx: dict = {}
+    term_hint: tuple[str, str] | None = None
+    try:
+        idx_hidden, _tabs = zzxk.fetch_index(session)
+        term_hint = (idx_hidden.get("xkxnm", ""), idx_hidden.get("xkxqm", ""))
+    except Exception as e:
+        log.debug("zzxk 首页学期提示获取失败: %s", e)
     try:
         page_params = fetch_page_params(session)
     except Exception as e:
         log.warning("选课首页参数抓取失败(不阻断): %s", e)
     try:
-        xsxx = fetch_xsxx(session)
+        xsxx = fetch_xsxx(session, term=term_hint)
     except Exception as e:
         log.warning("个人课表信息抓取失败(不阻断): %s", e)
     if page_params or xsxx:
@@ -256,20 +292,30 @@ def run(session: requests.Session, skip_catalog: bool = False) -> dict:
     courses: list[dict] = []
     if not skip_catalog:
         try:
-            courses += fetch_display_catalog(session)
+            courses += fetch_zzxk_catalog(session, with_capacity=with_capacity)
         except Exception as e:
-            log.warning("普通课目录抓取失败(不阻断): %s", e)
+            log.warning("zzxk 全量目录抓取失败(不阻断): %s", e)
         try:
             courses += fetch_pe_catalog(session)
         except Exception as e:
             log.warning("体育课目录抓取失败(不阻断): %s", e)
 
+    # 两个轮次的已选课程合并(tjxkbkk 补退选 + zzxkyzb 自主选课),按 jxb_id 去重
     choosed: list[dict] = []
-    try:
-        choosed = [_slim_class(c) for c in fetch_choosed(session)]
-        log.info("[已选] 当前已选 %d 门", len(choosed))
-    except Exception as e:
-        log.warning("已选课程抓取失败(不阻断): %s", e)
+    choosed_ids: set[str] = set()
+    for name, fetch in (("tjxkbkk", fetch_choosed),
+                        ("zzxk", lambda s: zzxk.fetch_choosed(s))):
+        try:
+            batch = fetch(session)
+            fresh = [
+                _slim_class(c, include_availability=False) for c in batch
+                if c.get("jxb_id") and c["jxb_id"] not in choosed_ids
+            ]
+            choosed_ids.update(c["jxb_id"] for c in fresh)
+            choosed += fresh
+            log.info("[已选] %s 轮次: %d 门", name, len(batch))
+        except Exception as e:
+            log.warning("%s 已选课程抓取失败(不阻断): %s", name, e)
 
     catalog = {
         "fetched_at": datetime.now().isoformat(timespec="seconds"),
@@ -293,11 +339,111 @@ def run(session: requests.Session, skip_catalog: bool = False) -> dict:
     return catalog
 
 
+def _load_seat_details() -> dict:
+    if not config.SEAT_DETAILS_FILE.exists():
+        return {"classes": {}, "errors": {}}
+    try:
+        data = json.loads(config.SEAT_DETAILS_FILE.read_text("utf-8"))
+        if isinstance(data, dict):
+            data.setdefault("classes", {})
+            data.setdefault("errors", {})
+            return data
+    except Exception:
+        pass
+    return {"classes": {}, "errors": {}}
+
+
+def _save_seat_details(details: dict) -> None:
+    tmp = config.SEAT_DETAILS_FILE.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(details, ensure_ascii=False, indent=2), "utf-8")
+    tmp.replace(config.SEAT_DETAILS_FILE)
+
+
+def refresh_seat_details(
+    session: requests.Session, jxb_ids: list[str]
+) -> dict:
+    """Refresh plan-only seat counts without touching monitor state."""
+    catalog = json.loads(config.CATALOG_FILE.read_text("utf-8"))
+    wanted = set(jxb_ids)
+    courses_by_endpoint: dict[str, list[dict]] = {}
+    for course in catalog.get("courses", []):
+        if any(c.get("jxb_id") in wanted for c in course.get("classes", [])):
+            courses_by_endpoint.setdefault(course.get("endpoint", ""), []).append(course)
+
+    fetched: dict[str, dict] = {}
+    errors: dict[str, str] = {}
+    zzxk_courses = {
+        course.get("kch") or course["kch_id"]: {
+            "endpoint": "zzxk",
+            "kch_id": course["kch_id"],
+            "kklxdm": str(course.get("kklxdm") or ""),
+        }
+        for course in courses_by_endpoint.get("zzxk", [])
+    }
+    if zzxk_courses:
+        try:
+            fetched.update(zzxk.fetch_seats(session, zzxk_courses))
+        except Exception as exc:
+            for course in courses_by_endpoint.get("zzxk", []):
+                for cls in course.get("classes", []):
+                    if cls.get("jxb_id") in wanted:
+                        errors[cls["jxb_id"]] = str(exc)
+
+    for course in courses_by_endpoint.get("pe", []):
+        payload = {**config.query_common("pe"), "kch_id": course.get("kch_id", "")}
+        try:
+            response = session.post(
+                config.JXB_LIST_URL,
+                data=payload,
+                headers=_HEADERS,
+                timeout=20,
+                allow_redirects=False,
+            )
+            if "application/json" not in response.headers.get("content-type", ""):
+                raise RuntimeError(f"体育课详情非 JSON: status={response.status_code}")
+            rows = response.json()
+            if isinstance(rows, list):
+                fetched.update(
+                    {row["jxb_id"]: row for row in rows if row.get("jxb_id")}
+                )
+        except Exception as exc:
+            for cls in course.get("classes", []):
+                if cls.get("jxb_id") in wanted:
+                    errors[cls["jxb_id"]] = str(exc)
+
+    details = _load_seat_details()
+    now = datetime.now().isoformat(timespec="seconds")
+    for jxb_id in wanted:
+        row = fetched.get(jxb_id)
+        if row:
+            details["classes"][jxb_id] = {
+                "jxbxzrs": row.get("jxbxzrs", row.get("yxzrs")),
+                "jxbrl": row.get("jxbrl"),
+                # sksj(上课时间) 用于 GUI 跨方案组时间冲突校验;pe 课程原始响应自带,
+                # zzxk 课程由 zzxk.fetch_seats 从教学班详情缓存回填。
+                "sksj": row.get("sksj"),
+                "jxdd": row.get("jxdd"),
+                "jsxx": row.get("jsxx"),
+                "availability": availability_from_row(row),
+                "updated_at": now,
+            }
+            details["errors"].pop(jxb_id, None)
+        else:
+            details["errors"][jxb_id] = errors.get(jxb_id, "接口未返回该教学班")
+    details["updated_at"] = now
+    _save_seat_details(details)
+    return details
+
+
 def main():
     ap = argparse.ArgumentParser(description="自动抓取用户信息与课程目录")
     ap.add_argument("--debug", action="store_true", help="DEBUG 日志")
     ap.add_argument("--skip-catalog", action="store_true",
                     help="只抓用户信息和已选,不抓课程目录")
+    ap.add_argument("--with-capacity", action="store_true",
+                    help="目录附带容量/教师/时间(逐课多查一次 JxbWithKch,慢)")
+    ap.add_argument("--seat-details", nargs="+", metavar="JXB_ID",
+                    help="仅刷新方案内教学班人数/容量缓存")
     args = ap.parse_args()
 
     logging.basicConfig(
@@ -307,7 +453,14 @@ def main():
 
     session = requests.Session()
     login(session)
-    catalog = run(session, skip_catalog=args.skip_catalog)
+    if args.seat_details:
+        details = refresh_seat_details(session, args.seat_details)
+        failed = [jxb_id for jxb_id in args.seat_details
+                  if jxb_id in details.get("errors", {})]
+        print(f"详情刷新: {len(args.seat_details) - len(failed)} 成功, {len(failed)} 失败")
+        return
+    catalog = run(session, skip_catalog=args.skip_catalog,
+                  with_capacity=args.with_capacity)
 
     user = catalog["user"]
     print()

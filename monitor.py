@@ -21,6 +21,8 @@ import requests
 import config
 import notifier
 import swap as swap_mod
+import timetable
+import zzxk
 from login import login, LoginError
 
 log = logging.getLogger("monitor")
@@ -75,10 +77,19 @@ def _fetch_one_course(session: requests.Session, kch: str) -> list[dict]:
 
 
 def fetch_courses(session: requests.Session) -> list[dict]:
-    """对 KCH_QUERIES 里的每门课查一次,返回所有教学班(按 jxb_id 去重)。"""
+    """对 KCH_QUERIES 里的每门课查一次,返回所有教学班(按 jxb_id 去重)。
+
+    endpoint 路由(两个选课轮次课程不重叠、id 不通用,2026-07 实测):
+      display / pe → tjxkbkk 补退选接口(原有路径,逐课查询)
+      zzxk         → zzxkyzb 自主选课模块(zzxk.fetch_seats,按分类批量查询)
+    """
     all_classes: list[dict] = []
     seen: set[str] = set()
-    for kch in config.KCH_QUERIES.keys():
+    zzxk_courses: dict[str, dict] = {}
+    for kch, q in config.KCH_QUERIES.items():
+        if q.get("endpoint") == "zzxk":
+            zzxk_courses[kch] = q
+            continue
         classes = _fetch_one_course(session, kch)
         for c in classes:
             jxb_id = c.get("jxb_id")
@@ -86,6 +97,16 @@ def fetch_courses(session: requests.Session) -> list[dict]:
                 seen.add(jxb_id)
                 all_classes.append(c)
         log.debug("kch=%s 拉到 %d 个教学班", kch, len(classes))
+    if zzxk_courses:
+        try:
+            rows = zzxk.fetch_seats(session, zzxk_courses)
+        except zzxk.SessionExpired as e:
+            raise SessionExpired(str(e)) from e
+        for jxb_id, c in rows.items():
+            if jxb_id not in seen:
+                seen.add(jxb_id)
+                all_classes.append(c)
+        log.debug("zzxk %d 门课拉到 %d 个教学班", len(zzxk_courses), len(rows))
     return all_classes
 
 
@@ -242,9 +263,36 @@ def _save_swap_state(state: dict) -> None:
     tmp.replace(config.SWAP_STATE_FILE)
 
 
+def _conflict_with_other_groups(
+    current: dict[str, dict], group: str, target_id: str, held: dict[str, str],
+) -> tuple[str | None, str | None, bool]:
+    """目标候选与其他组当前持有课程的时间冲突判定。
+
+    返回 (确定冲突的组名或 None, 冲突时段描述, 是否存在因数据缺失而无法判断的组)。
+    只与"当前持有"比较——冲突判定必须动态、实时:今天冲突不代表以后也冲突,
+    因为别组自己换课后 held 会变,下一轮重新判断即可。
+    """
+    target_sksj = current.get(target_id, {}).get("sksj")
+    schedule_unknown = False
+    for other_group in config.PRIORITY_GROUPS:
+        if other_group == group:
+            continue
+        other_held_id = held.get(other_group)
+        if not other_held_id:
+            continue
+        other_sksj = current.get(other_held_id, {}).get("sksj")
+        verdict = timetable.conflicts(target_sksj, other_sksj)
+        if verdict is True:
+            return other_group, timetable.describe_conflict(target_sksj, other_sksj), schedule_unknown
+        if verdict is None:
+            schedule_unknown = True
+    return None, None, schedule_unknown
+
+
 def maybe_auto_swap(
     session: requests.Session,
     spot_open_changes: list[dict],
+    current: dict[str, dict],
 ) -> list[dict]:
     """每组只选择当前空闲目标中优先级最高的一项执行升级。
 
@@ -277,6 +325,27 @@ def maybe_auto_swap(
         if current_held not in ids or ids.index(target_id) >= ids.index(current_held):
             log.info("[swap] %s 不高于当前持有 %s,跳过", target_id, current_held)
             continue
+        conflict_group, conflict_detail, schedule_unknown = _conflict_with_other_groups(
+            current, group, target_id, held
+        )
+        if conflict_group:
+            log.info("[swap] %s 与 %s 组当前持有课程时间冲突(%s),跳过",
+                     target_id, conflict_group, conflict_detail)
+            results.append({
+                "kind": "conflict_skipped",
+                "jxbmc": c.get("jxbmc"), "kcmc": c.get("kcmc"),
+                "group": group, "target": target_id,
+                "conflict_group": conflict_group, "detail": conflict_detail,
+            })
+            continue
+        if schedule_unknown:
+            log.info("[swap] %s 与其他组当前持有课程的时间数据不全,保守跳过", target_id)
+            results.append({
+                "kind": "schedule_unknown_skip",
+                "jxbmc": c.get("jxbmc"), "kcmc": c.get("kcmc"),
+                "group": group, "target": target_id,
+            })
+            continue
         candidates.setdefault(group, []).append(c)
 
     for group, group_candidates in candidates.items():
@@ -301,6 +370,7 @@ def maybe_auto_swap(
             "kcmc": c.get("kcmc"),
             "ok": ok,
             "status": status,
+            "dry_run": config.AUTO_SWAP_DRY_RUN,
             "group": group,
             "target": target_id,
             "drop": drop_id,
@@ -334,7 +404,7 @@ def run_once(session: requests.Session, state: dict[str, dict]) -> dict[str, dic
     swap_results = []
     if config.AUTO_SWAP:
         try:
-            swap_results = maybe_auto_swap(session, _open_targets(current, watched))
+            swap_results = maybe_auto_swap(session, _open_targets(current, watched), current)
         except Exception as e:
             log.exception("auto swap 异常: %s", e)
     all_changes = list(changes) + swap_results

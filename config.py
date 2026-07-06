@@ -141,6 +141,7 @@ _DEFAULT_SETTINGS = {
     "query_overrides": {"display": {}, "pe": {}},
     "courses": _DEFAULT_KCH_QUERIES,
     "auto_swap": {"enabled": False, "dry_run": False},
+    "notifications": {"email_enabled": True},
     "priority_groups": _DEFAULT_PRIORITY_GROUPS,
 }
 
@@ -186,7 +187,7 @@ def load_user_settings() -> dict:
         except Exception:
             pass
     # 小字典分区:逐键合并,允许只覆盖个别键
-    for key in ("term", "query_overrides", "auto_swap"):
+    for key in ("term", "query_overrides", "auto_swap", "notifications"):
         if isinstance(data.get(key), dict):
             settings[key] = _deep_merge(settings[key], data[key])
     # 整体替换分区:用户删掉的课/组不应被默认值"复活"。
@@ -222,6 +223,7 @@ def update_user_settings(**sections) -> None:
 def _apply_settings(settings: dict) -> None:
     global XKXNM, XKXQM, QUERY_OVERRIDES, KCH_QUERIES
     global PRIORITY_GROUPS, AUTO_SWAP, AUTO_SWAP_DRY_RUN
+    global EMAIL_ENABLED
     XKXNM = settings["term"]["xkxnm"]
     XKXQM = settings["term"]["xkxqm"]
     QUERY_OVERRIDES = settings["query_overrides"]
@@ -229,6 +231,7 @@ def _apply_settings(settings: dict) -> None:
     PRIORITY_GROUPS = settings["priority_groups"]
     AUTO_SWAP = bool(settings["auto_swap"]["enabled"])
     AUTO_SWAP_DRY_RUN = bool(settings["auto_swap"]["dry_run"])
+    EMAIL_ENABLED = bool(settings["notifications"]["email_enabled"])
 
 
 USER_SETTINGS = load_user_settings()
@@ -315,6 +318,15 @@ CAPTCHA_DEBUG_DIR = ROOT / "captcha_debug"
 SWAP_STATE_FILE = ROOT / "swap_state.json"
 # bootstrap.py 抓取的课程目录(全部可选课程+教学班+当前已选),GUI"选课设置"页读取
 CATALOG_FILE = ROOT / "catalog.json"
+# zzxkyzb 监控用的教学班容量缓存(容量基本不变,PartDisplay 不返回,JxbWithKch 查一次后缓存)
+ZZXK_CAPACITY_FILE = ROOT / "zzxk_capacity.json"
+SEAT_DETAILS_FILE = ROOT / "seat_details.json"
+
+# 课程分类代码 → 名称(zzxkyzb 首页页签实测 + 体育课 06)
+KKLX_NAMES = {
+    "01": "主修", "10": "通识", "11": "公选",
+    "30": "任选", "69": "交叉", "06": "体育",
+}
 
 # === 自动 swap 配置 ===
 # AUTO_SWAP / AUTO_SWAP_DRY_RUN 由 user_settings.json 的 auto_swap 分区决定
@@ -323,3 +335,54 @@ CATALOG_FILE = ROOT / "catalog.json"
 # dry_run=True:即使 enabled,所有 swap 调用只打印不发。
 #   生产前建议先 enabled=True + dry_run=True 跑一阵,验证触发逻辑无误。
 # 自动换班的目标和要退的班均由 PRIORITY_GROUPS 动态决定,无需另配映射。
+
+
+def _quote_env_value(value: str) -> str:
+    """Quote an environment value without exposing it to variable expansion."""
+    escaped = value.replace("\\", "\\\\").replace("'", "\\'")
+    return f"'{escaped}'"
+
+
+def save_env_settings(values: dict[str, str], path: Path | None = None) -> None:
+    """Atomically update selected .env keys while preserving unrelated content."""
+    global JACCOUNT_USER, JACCOUNT_PASS
+    global SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, MAIL_FROM, MAIL_TO
+    global POLL_MIN, POLL_MAX
+
+    env_path = path or ROOT / ".env"
+    lines = (
+        env_path.read_text("utf-8").splitlines()
+        if env_path.exists()
+        else []
+    )
+    pending = {str(key): str(value) for key, value in values.items()}
+    output: list[str] = []
+    for line in lines:
+        stripped = line.lstrip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            output.append(line)
+            continue
+        key = stripped.split("=", 1)[0].strip()
+        if key in pending:
+            output.append(f"{key}={_quote_env_value(pending.pop(key))}")
+        else:
+            output.append(line)
+    if pending and output and output[-1] != "":
+        output.append("")
+    output.extend(f"{key}={_quote_env_value(value)}" for key, value in pending.items())
+    tmp = env_path.with_suffix(env_path.suffix + ".tmp")
+    tmp.write_text("\n".join(output) + "\n", "utf-8")
+    tmp.replace(env_path)
+
+    for key, value in values.items():
+        os.environ[key] = str(value)
+    JACCOUNT_USER = str(values.get("JACCOUNT_USER", JACCOUNT_USER))
+    JACCOUNT_PASS = str(values.get("JACCOUNT_PASS", JACCOUNT_PASS))
+    SMTP_HOST = str(values.get("SMTP_HOST", SMTP_HOST))
+    SMTP_PORT = int(values.get("SMTP_PORT", SMTP_PORT))
+    SMTP_USER = str(values.get("SMTP_USER", SMTP_USER))
+    SMTP_PASS = str(values.get("SMTP_PASS", SMTP_PASS))
+    MAIL_FROM = str(values.get("MAIL_FROM", MAIL_FROM))
+    MAIL_TO = str(values.get("MAIL_TO", MAIL_TO))
+    POLL_MIN = int(values.get("POLL_MIN", POLL_MIN))
+    POLL_MAX = int(values.get("POLL_MAX", POLL_MAX))
