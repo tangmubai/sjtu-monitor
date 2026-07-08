@@ -11,6 +11,10 @@ load_dotenv(ROOT / ".env")
 JACCOUNT_USER = os.getenv("JACCOUNT_USER", "")
 JACCOUNT_PASS = os.getenv("JACCOUNT_PASS", "")
 
+# course.sjtu.plus(选课社区)账号 —— 与 jaccount 完全独立的站内账号密码
+COURSE_PLUS_EMAIL = os.getenv("COURSE_PLUS_EMAIL", "")
+COURSE_PLUS_PASSWORD = os.getenv("COURSE_PLUS_PASSWORD", "")
+
 SMTP_HOST = os.getenv("SMTP_HOST", "")
 SMTP_PORT = int(os.getenv("SMTP_PORT", "465"))
 SMTP_USER = os.getenv("SMTP_USER", "")
@@ -321,6 +325,8 @@ CATALOG_FILE = ROOT / "catalog.json"
 # zzxkyzb 监控用的教学班容量缓存(容量基本不变,PartDisplay 不返回,JxbWithKch 查一次后缓存)
 ZZXK_CAPACITY_FILE = ROOT / "zzxk_capacity.json"
 SEAT_DETAILS_FILE = ROOT / "seat_details.json"
+# course.sjtu.plus 评分缓存(按 kch 键存,GUI"选课设置"页展示用)
+RATINGS_FILE = ROOT / "ratings.json"
 
 # 课程分类代码 → 名称(zzxkyzb 首页页签实测 + 体育课 06)
 KKLX_NAMES = {
@@ -346,6 +352,7 @@ def _quote_env_value(value: str) -> str:
 def save_env_settings(values: dict[str, str], path: Path | None = None) -> None:
     """Atomically update selected .env keys while preserving unrelated content."""
     global JACCOUNT_USER, JACCOUNT_PASS
+    global COURSE_PLUS_EMAIL, COURSE_PLUS_PASSWORD
     global SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, MAIL_FROM, MAIL_TO
     global POLL_MIN, POLL_MAX
 
@@ -378,6 +385,8 @@ def save_env_settings(values: dict[str, str], path: Path | None = None) -> None:
         os.environ[key] = str(value)
     JACCOUNT_USER = str(values.get("JACCOUNT_USER", JACCOUNT_USER))
     JACCOUNT_PASS = str(values.get("JACCOUNT_PASS", JACCOUNT_PASS))
+    COURSE_PLUS_EMAIL = str(values.get("COURSE_PLUS_EMAIL", COURSE_PLUS_EMAIL))
+    COURSE_PLUS_PASSWORD = str(values.get("COURSE_PLUS_PASSWORD", COURSE_PLUS_PASSWORD))
     SMTP_HOST = str(values.get("SMTP_HOST", SMTP_HOST))
     SMTP_PORT = int(values.get("SMTP_PORT", SMTP_PORT))
     SMTP_USER = str(values.get("SMTP_USER", SMTP_USER))

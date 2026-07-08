@@ -31,6 +31,7 @@ from datetime import datetime
 import requests
 
 import config
+import course_plus
 import zzxk
 from login import login
 
@@ -435,6 +436,96 @@ def refresh_seat_details(
     return details
 
 
+def _load_ratings() -> dict:
+    if not config.RATINGS_FILE.exists():
+        return {"courses": {}, "errors": {}}
+    try:
+        data = json.loads(config.RATINGS_FILE.read_text("utf-8"))
+        if isinstance(data, dict):
+            data.setdefault("courses", {})
+            data.setdefault("errors", {})
+            return data
+    except Exception:
+        pass
+    return {"courses": {}, "errors": {}}
+
+
+def _save_ratings(ratings: dict) -> None:
+    tmp = config.RATINGS_FILE.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(ratings, ensure_ascii=False, indent=2), "utf-8")
+    tmp.replace(config.RATINGS_FILE)
+
+
+def _first_teacher_name(course: dict) -> str | None:
+    """从该课第一个教学班的 jsxx("工号/姓名/职称;...")里取第一位老师姓名,当消歧提示用。"""
+    classes = course.get("classes") or []
+    if not classes:
+        return None
+    jsxx = classes[0].get("jsxx") or ""
+    first = jsxx.split(";", 1)[0]
+    parts = first.split("/")
+    return parts[1] if len(parts) >= 2 else None
+
+
+def refresh_ratings(
+    courses: list[dict] | None = None, kch_list: list[str] | None = None
+) -> dict:
+    """按 kch 批量拉 course.sjtu.plus 评分,写入 ratings.json。
+
+    courses=None 时从 catalog.json 读;kch_list=None 时刷新全部,否则只刷新给定课程代码。
+    course.sjtu.plus 与 i.sjtu.edu.cn 是完全独立的站点,用自己的 requests.Session 登录,
+    不复用 jaccount 的 session。缺凭据/登录失败均只记警告,返回现有缓存,不阻断调用方。
+    """
+    ratings = _load_ratings()
+    if not config.COURSE_PLUS_PASSWORD and not config.COURSE_PLUS_EMAIL:
+        log.warning("[评分] COURSE_PLUS_PASSWORD 未配置,跳过评分抓取")
+        return ratings
+
+    if courses is None:
+        catalog = json.loads(config.CATALOG_FILE.read_text("utf-8"))
+        courses = catalog.get("courses", [])
+    if kch_list is not None:
+        wanted = set(kch_list)
+        courses = [c for c in courses if c.get("kch") in wanted]
+
+    cp_session = requests.Session()
+    try:
+        course_plus.login(cp_session)
+    except course_plus.LoginError as exc:
+        log.warning("[评分] course.sjtu.plus 登录失败,跳过: %s", exc)
+        return ratings
+
+    now = datetime.now().isoformat(timespec="seconds")
+    ok = 0
+    for course in courses:
+        kch = course.get("kch")
+        if not kch:
+            continue
+        teacher_hint = _first_teacher_name(course)
+        try:
+            result = course_plus.get_rating_by_code(cp_session, kch, teacher_hint)
+        except Exception as exc:
+            # reason 区分"确实抓取失败,不代表没有评分"(fetch_failed) 与
+            # "course.sjtu.plus 没有这门课"(not_found,和"有课但 0 条评价"一样都是
+            # 合法的"无评分"状态) —— GUI 靠 reason 展示不同文案,而不是猜错误文本。
+            ratings["errors"][kch] = {"reason": "fetch_failed", "message": str(exc)}
+            continue
+        if result:
+            ratings["courses"][kch] = {**result, "updated_at": now}
+            ratings["errors"].pop(kch, None)
+            ok += 1
+        else:
+            ratings["errors"][kch] = {
+                "reason": "not_found",
+                "message": "course.sjtu.plus 未收录该课程",
+            }
+
+    ratings["updated_at"] = now
+    _save_ratings(ratings)
+    log.info("[评分] 刷新完成: %d 门成功, %d 门失败/未收录", ok, len(ratings["errors"]))
+    return ratings
+
+
 def main():
     ap = argparse.ArgumentParser(description="自动抓取用户信息与课程目录")
     ap.add_argument("--debug", action="store_true", help="DEBUG 日志")
@@ -444,12 +535,27 @@ def main():
                     help="目录附带容量/教师/时间(逐课多查一次 JxbWithKch,慢)")
     ap.add_argument("--seat-details", nargs="+", metavar="JXB_ID",
                     help="仅刷新方案内教学班人数/容量缓存")
+    ap.add_argument("--with-ratings", action="store_true",
+                    help="抓课程目录时顺带拉取 course.sjtu.plus 评分(逐课查询,较慢)")
+    ap.add_argument("--fetch-ratings-all", action="store_true",
+                    help="仅刷新 catalog.json 全部课程的 course.sjtu.plus 评分缓存")
+    ap.add_argument("--fetch-ratings", nargs="+", metavar="KCH",
+                    help="仅刷新指定课程代码的 course.sjtu.plus 评分缓存")
     args = ap.parse_args()
 
     logging.basicConfig(
         level=logging.DEBUG if args.debug else logging.INFO,
         format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
     )
+
+    if args.fetch_ratings_all or args.fetch_ratings:
+        # 评分是 course.sjtu.plus 独立站点,不需要 jaccount session
+        result = refresh_ratings(
+            kch_list=None if args.fetch_ratings_all else args.fetch_ratings
+        )
+        print(f"评分刷新: {len(result.get('courses', {}))} 门成功, "
+              f"{len(result.get('errors', {}))} 门失败/未收录")
+        return
 
     session = requests.Session()
     login(session)
@@ -461,6 +567,8 @@ def main():
         return
     catalog = run(session, skip_catalog=args.skip_catalog,
                   with_capacity=args.with_capacity)
+    if args.with_ratings and catalog.get("courses"):
+        refresh_ratings(courses=catalog["courses"])
 
     user = catalog["user"]
     print()

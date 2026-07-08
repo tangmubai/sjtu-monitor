@@ -128,6 +128,32 @@ def _availability_text(value: str) -> str:
     return {"open": "有空位", "full": "已满", "unknown": "未知"}.get(value, "未知")
 
 
+def _rating_error_reason(error) -> str:
+    """兼容旧版 ratings.json(errors 值是纯字符串)和新版(结构化 {reason, message})。"""
+    if isinstance(error, dict):
+        return error.get("reason") or "fetch_failed"
+    if isinstance(error, str) and "未收录" in error:
+        return "not_found"
+    return "fetch_failed"
+
+
+def _rating_text(row: dict) -> str:
+    row = row or {}
+    cached = row.get("rating")
+    if cached:
+        stats = cached.get("rating") or {}
+        score = stats.get("score")
+        count = stats.get("count") or 0
+        if score is not None and count:
+            return f"{score:.2f}（{count}）"
+        return "暂无评价"  # course.sjtu.plus 有这门课,但还没人打分
+    error = row.get("rating_error")
+    if error:
+        reason = _rating_error_reason(error)
+        return "未收录" if reason == "not_found" else "获取失败"
+    return "—"  # 尚未刷新过
+
+
 def _split_info_lines(value) -> list[str]:
     if value is None:
         return []
@@ -347,6 +373,10 @@ class MonitorWindow(QMainWindow):
         self.seat_process: QProcess | None = None
         self._seat_pending: set[str] = set()
         self._seat_active: set[str] = set()
+        self.ratings_all_process: QProcess | None = None
+        self.ratings_plan_process: QProcess | None = None
+        self._ratings_by_kch: dict[str, dict] = {}
+        self._ratings_errors_by_kch: dict[str, dict] = {}
         self._runtime_lines: list[str] = []
         self._settings_loaded = False
         self._groups_dirty = False
@@ -758,8 +788,12 @@ class MonitorWindow(QMainWindow):
         data_copy.addWidget(self.catalog_info)
         data_layout.addLayout(data_copy)
         data_layout.addStretch()
+        self.fetch_ratings_check = QCheckBox("同时获取课程评价（较慢）")
+        data_layout.addWidget(self.fetch_ratings_check)
         self.bootstrap_button = self._button("自动获取用户与课程", self.run_bootstrap)
         data_layout.addWidget(self.bootstrap_button)
+        self.ratings_all_button = self._button("刷新全部课程评分", self.run_fetch_all_ratings)
+        data_layout.addWidget(self.ratings_all_button)
         layout.addWidget(data_card)
 
         self.course_splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -830,7 +864,7 @@ class MonitorWindow(QMainWindow):
         layout.addLayout(self.course_filters)
 
         self.course_table = self._table(
-            ("课程信息", "空位状态", "所在方案"), multi=True
+            ("课程信息", "空位状态", "所在方案", "评价"), multi=True
         )
         self.course_table.setWordWrap(True)
         self.course_table.setHorizontalScrollBarPolicy(
@@ -840,6 +874,7 @@ class MonitorWindow(QMainWindow):
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         self.course_table.itemSelectionChanged.connect(self._on_course_selection)
         self.course_table.itemDoubleClicked.connect(
             lambda _item: self._add_selected_to_group()
@@ -915,7 +950,7 @@ class MonitorWindow(QMainWindow):
         layout.addWidget(priority)
 
         self.member_table = self._table(
-            ("优先级", "课程", "教学班", "人数/容量", "状态")
+            ("优先级", "课程", "教学班", "人数/容量", "评价", "状态")
         )
         layout.addWidget(self.member_table, 1)
 
@@ -935,6 +970,10 @@ class MonitorWindow(QMainWindow):
         self.plan_member_actions.addWidget(
             self._button("上移", lambda: self._move_member(-1))
         )
+        self.ratings_plan_button = self._button(
+            "刷新方案评分", self.run_fetch_plan_ratings
+        )
+        self.plan_member_actions.addWidget(self.ratings_plan_button)
         layout.addLayout(self.plan_member_actions)
         return panel
 
@@ -1078,6 +1117,24 @@ class MonitorWindow(QMainWindow):
         account_form.addRow("", self.show_secrets_check)
         account_layout.addLayout(account_form)
         layout.addWidget(account_card)
+
+        course_plus_card, course_plus_layout = self._card()
+        title = QLabel("课程评分（course.sjtu.plus）")
+        title.setObjectName("sectionTitle")
+        course_plus_layout.addWidget(title)
+        course_plus_form = QFormLayout()
+        self.course_plus_pass_edit = QLineEdit()
+        self.course_plus_pass_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.course_plus_pass_edit.setPlaceholderText(
+            "与 JAccount 用户名相同，仅需单独填该站密码"
+        )
+        course_plus_form.addRow("选课社区密码", self.course_plus_pass_edit)
+        course_plus_layout.addLayout(course_plus_form)
+        hint = QLabel("选课社区账号与 JAccount 是不同账号体系，但邮箱前缀沿用同一个用户名；未在该站注册过则留空即可，不影响其余功能。")
+        hint.setObjectName("muted")
+        hint.setWordWrap(True)
+        course_plus_layout.addWidget(hint)
+        layout.addWidget(course_plus_card)
 
         monitor_card, monitor_layout = self._card()
         title = QLabel("监控参数")
@@ -1249,6 +1306,7 @@ class MonitorWindow(QMainWindow):
     def _load_settings_form(self) -> None:
         self.account_user_edit.setText(config.JACCOUNT_USER)
         self.account_pass_edit.setText(config.JACCOUNT_PASS)
+        self.course_plus_pass_edit.setText(config.COURSE_PLUS_PASSWORD)
         self.poll_min_edit.setText(str(config.POLL_MIN))
         self.poll_max_edit.setText(str(config.POLL_MAX))
         self.email_enabled_check.setChecked(config.EMAIL_ENABLED)
@@ -1264,6 +1322,7 @@ class MonitorWindow(QMainWindow):
     def _toggle_secret_visibility(self, visible: bool) -> None:
         mode = QLineEdit.EchoMode.Normal if visible else QLineEdit.EchoMode.Password
         self.account_pass_edit.setEchoMode(mode)
+        self.course_plus_pass_edit.setEchoMode(mode)
         self.smtp_pass_edit.setEchoMode(mode)
 
     def _save_user_settings(self) -> None:
@@ -1286,6 +1345,7 @@ class MonitorWindow(QMainWindow):
         values = {
             "JACCOUNT_USER": self.account_user_edit.text().strip(),
             "JACCOUNT_PASS": self.account_pass_edit.text(),
+            "COURSE_PLUS_PASSWORD": self.course_plus_pass_edit.text(),
             "POLL_MIN": str(poll_min),
             "POLL_MAX": str(poll_max),
             "SMTP_HOST": self.smtp_host_edit.text().strip(),
@@ -1315,6 +1375,9 @@ class MonitorWindow(QMainWindow):
             **seat_details.get("errors", {}),
             **self._seat_runtime_errors,
         }
+        ratings = _read_json(config.RATINGS_FILE, {"courses": {}, "errors": {}})
+        self._ratings_by_kch = ratings.get("courses", {})
+        self._ratings_errors_by_kch = ratings.get("errors", {})
         self._choosed_ids = {
             course.get("jxb_id")
             for course in catalog.get("choosed", [])
@@ -1348,6 +1411,9 @@ class MonitorWindow(QMainWindow):
                         rows[jxb_id][key] = detail[key]
         for row in rows.values():
             row["category"] = config.KKLX_NAMES.get(str(row.get("kklxdm") or ""), "—")
+            kch = row.get("kch") or ""
+            row["rating"] = self._ratings_by_kch.get(kch)
+            row["rating_error"] = self._ratings_errors_by_kch.get(kch)
         self._course_rows = list(rows.values())
         self._course_by_id = rows
         self._rebuild_category_filter()
@@ -1429,6 +1495,7 @@ class MonitorWindow(QMainWindow):
                 f"{_course_title(course)}\n{_course_summary(course)}",
                 "当前已选" if chosen else _availability_text(availability),
                 group or "—",
+                _rating_text(course),
             )
             for column, value in enumerate(values):
                 item = self._item(str(value), jxb_id if column == 0 else None)
@@ -1612,6 +1679,7 @@ class MonitorWindow(QMainWindow):
                 _course_title(course),
                 _course_summary(course),
                 seat_text,
+                _rating_text(course),
                 " / ".join(notes) or "目标",
             )
             for column, value in enumerate(values):
@@ -2242,6 +2310,10 @@ class MonitorWindow(QMainWindow):
                     self._seat_runtime_errors[jxb_id] = "后台查询失败"
             self._seat_active.clear()
             QTimer.singleShot(0, self._start_next_seat_refresh)
+        elif label == "ratings_all" and process is self.ratings_all_process:
+            self.ratings_all_process = None
+        elif label == "ratings_plan" and process is self.ratings_plan_process:
+            self.ratings_plan_process = None
         self._refresh_process_buttons()
         self.refresh()
 
@@ -2294,12 +2366,44 @@ class MonitorWindow(QMainWindow):
             self.bootstrap_process.state() != QProcess.ProcessState.NotRunning
         ):
             return
+        extra = ("--with-ratings",) if self.fetch_ratings_check.isChecked() else ()
         self.bootstrap_process = self._start_process(
-            "bootstrap", self._process_args("bootstrap.py")
+            "bootstrap", self._process_args("bootstrap.py", *extra)
         )
         self._refresh_process_buttons()
         self.nav.setCurrentRow(0)
         self._set_status("正在获取用户信息与课程目录…")
+
+    def run_fetch_all_ratings(self) -> None:
+        if self.ratings_all_process and (
+            self.ratings_all_process.state() != QProcess.ProcessState.NotRunning
+        ):
+            return
+        self.ratings_all_process = self._start_process(
+            "ratings_all", self._process_args("bootstrap.py", "--fetch-ratings-all")
+        )
+        self._refresh_process_buttons()
+        self._set_status("正在刷新全部课程评分…")
+
+    def run_fetch_plan_ratings(self) -> None:
+        if self.ratings_plan_process and (
+            self.ratings_plan_process.state() != QProcess.ProcessState.NotRunning
+        ):
+            return
+        kch_list = sorted({
+            self._course_by_id[jxb_id]["kch"]
+            for group in self.groups.values()
+            for jxb_id in group.get("priority", [])
+            if jxb_id in self._course_by_id and self._course_by_id[jxb_id].get("kch")
+        })
+        if not kch_list:
+            _message(self, QMessageBox.Icon.Information, "刷新方案评分", "方案为空，无需刷新。")
+            return
+        self.ratings_plan_process = self._start_process(
+            "ratings_plan", self._process_args("bootstrap.py", "--fetch-ratings", *kch_list)
+        )
+        self._refresh_process_buttons()
+        self._set_status("正在刷新选课计划课程评分…")
 
     def _refresh_process_buttons(self) -> None:
         monitor_running = bool(
@@ -2318,10 +2422,20 @@ class MonitorWindow(QMainWindow):
             self.seat_process
             and self.seat_process.state() != QProcess.ProcessState.NotRunning
         )
+        ratings_all_running = bool(
+            self.ratings_all_process
+            and self.ratings_all_process.state() != QProcess.ProcessState.NotRunning
+        )
+        ratings_plan_running = bool(
+            self.ratings_plan_process
+            and self.ratings_plan_process.state() != QProcess.ProcessState.NotRunning
+        )
         self.start_button.setEnabled(not monitor_running)
         self.stop_button.setEnabled(monitor_running)
         self.once_button.setEnabled(not once_running)
         self.bootstrap_button.setEnabled(not bootstrap_running and not seat_running)
+        self.ratings_all_button.setEnabled(not ratings_all_running)
+        self.ratings_plan_button.setEnabled(not ratings_plan_running)
 
     def _set_monitor_running(self, running: bool) -> None:
         self.monitor_badge.setText("●  监控运行中" if running else "●  未运行")
@@ -2361,7 +2475,10 @@ class MonitorWindow(QMainWindow):
             self.monitor_process.terminate()
             if not self.monitor_process.waitForFinished(1000):
                 self.monitor_process.kill()
-        for process in (self.once_process, self.bootstrap_process, self.seat_process):
+        for process in (
+            self.once_process, self.bootstrap_process, self.seat_process,
+            self.ratings_all_process, self.ratings_plan_process,
+        ):
             if process and process.state() != QProcess.ProcessState.NotRunning:
                 process.terminate()
                 if not process.waitForFinished(800):

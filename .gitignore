@@ -6,6 +6,7 @@ user_settings.json
 catalog.json
 zzxk_capacity.json
 seat_details.json
+ratings.json
 *.log
 captcha_debug/
 __pycache__/
@@ -21,3 +22,5 @@ i.sjtu.edu.cn_*.har
 CLAUDE.md
 AGENTS.md
 .vscode/
+course.sjtu.plus.har
+course.sjtu.plus_*.har
