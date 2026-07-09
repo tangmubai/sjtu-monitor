@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python-checks:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Syntax check
+        shell: bash
+        run: python -m py_compile *.py
+
+      # 仅运行当前保留的 Python 离线单测文件。
+      - name: Unit tests
+        run: python -m unittest -v test_gui_logic.py test_gui_responsive.py
+
+  frontend-checks:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # package-lock.json 由 npm 11 生成, npm 10 (Node 20/22 自带) 的同步检查会误报
+      # 锁文件缺失 vitest 嵌套 vite 的可选 peer 依赖, 因此固定使用 Node 24 (npm 11)。
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm run test
+
+      - name: Build
+        run: npm run build
+
+  rust-checks:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # tauri-winres 需要 rc.exe; 在 PATH/注册表找不到时通过 RC 环境变量指定,
+      # 按运行器实际安装的 Windows SDK 版本自动定位(不依赖固定版本号)。
+      - name: Locate rc.exe
+        shell: pwsh
+        run: |
+          if (-not $env:RC) {
+            $rc = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\10.*\x64\rc.exe' -ErrorAction SilentlyContinue |
+              Sort-Object FullName -Descending | Select-Object -First 1
+            if ($rc) { "RC=$($rc.FullName)" >> $env:GITHUB_ENV }
+          }
+
+      - name: Cargo check
+        run: cargo check --manifest-path src-tauri/Cargo.toml --locked

@@ -1,14 +1,16 @@
 # 交我选
 
-### 免责声明：本项目仅用于监控上海交通大学 i.sjtu.edu.cn 推荐选课页面的教学班数据（已选/容量）并在数据发生变化时通过 Windows 桌面通知和电子邮件发送告警。项目不具备也不应被用于自动抢课、批量代选、或绕过学校或第三方服务的任何访问控制或风控措施。作者已尽力提供正确的实现，但不对因使用本项目或基于本项目的二次开发所导致的任何直接、间接、附带、特殊或衍生性损失承担责任，包括但不限于数据丢失、账户封禁、校纪处分、法律责任或其他经济损失。在适用法律允许的最大范围内，作者对因使用本软件而产生的所有责任均予以否认。
+### 免责声明：本项目仅用于监控上海交通大学 i.sjtu.edu.cn 推荐选课页面的教学班数据（已选/容量）并在数据发生变化时通过桌面通知和电子邮件发送告警。项目不具备也不应被用于自动抢课、批量代选、或绕过学校或第三方服务的任何访问控制或风控措施。作者已尽力提供正确的实现，但不对因使用本项目或基于本项目的二次开发所导致的任何直接、间接、附带、特殊或衍生性损失承担责任，包括但不限于数据丢失、账户封禁、校纪处分、法律责任或其他经济损失。在适用法律允许的最大范围内，作者对因使用本软件而产生的所有责任均予以否认。
 
 ## 项目简介
-本项目主要实现监控上海交通大学 `i.sjtu.edu.cn` 推荐选课页面中的指定教学班。人数或容量变化时，程序会写入日志，并通过 Windows 桌面通知和可选的 SMTP 邮件告警。
+本项目主要实现监控上海交通大学 `i.sjtu.edu.cn` 推荐选课页面中的指定教学班。人数或容量变化时，程序会写入日志，并通过系统桌面通知和可选的 SMTP 邮件告警。
 
 ## 环境要求
 
 - Python 3.10 或更高版本
-- Windows 10/11（桌面通知依赖 `win11toast`；其他系统仍可使用日志和邮件）
+- Windows 10/11、macOS 或 Linux（Linux 桌面通知需要系统提供 `notify-send`）
+- Node.js 20 或更高版本（Tauri/React 前端）
+- Rust stable 工具链（Tauri 桌面壳）
 - 可正常访问交我办与 jAccount
 
 ## 安装
@@ -20,12 +22,13 @@ cd sjtu-monitor
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
+npm install
 
 Copy-Item .env.example .env
 notepad .env
 ```
 
-`.env` 至少需要填写：
+`.env` 仍可用于首次导入旧配置。通过桌面设置页保存后，密码会迁移到系统安全存储；`.env` 中的敏感键会被移除。
 
 ```dotenv
 JACCOUNT_USER=your_jaccount_id
@@ -74,11 +77,7 @@ KCH_QUERIES = {
 - `pe`：体育课程，使用 `JXB_LIST_URL`。
 - `_DISPLAY_COMMON` 和 `_PE_COMMON` 中的学年、学期、专业等参数必须与当前账号一致。
 
-可运行以下命令查看当前已选课程及其 `jxb_id`：
-
-```powershell
-python test_choosed.py
-```
+可在桌面端“选课”页面刷新课程目录后查看当前已选课程及其 `jxb_id`。
 
 ### 2. 设置优先级
 
@@ -121,6 +120,24 @@ python monitor.py
 python monitor.py --debug
 ```
 
+图形界面：
+
+```powershell
+python gui.py
+```
+
+`gui.py` 现在是 Tauri 桌面前端的兼容启动器。它会把当前 conda 环境中的 Python 解释器传给 Tauri/Rust 桥接层，再由桥接层调用 `gui_backend.py`、`monitor.py` 和 `bootstrap.py`。开发模式也可直接运行：
+
+```powershell
+npm run tauri dev
+```
+
+Tauri/React 前端支持运行监控、查看课程快照、换课记录与合并日志，并通过“课程目录 → 选课方案 → 优先级”流程配置教学班。课程目录只保存和显示空位状态；教学班加入方案后才异步查询人数与容量，结果写入 `seat_details.json`，不会改写监控基线 `state.json`。
+
+课程目录以“课程名称 · 教师”为主标题，时间、地点、课程号和教学班号作为摘要；选中教学班后，下方会显示可复制的完整教师、时间、地点和 ID 信息。搜索支持课程、教师、编号、时间与地点。
+
+“用户设置”页可编辑 JAccount、轮询间隔和 SMTP 邮件参数。密码写入系统安全存储，非敏感配置写入本地 `.env`，邮件开关及其他非敏感设置写入 `user_settings.json`；已运行的监控进程需重启后才会使用新参数。
+
 首次运行只建立 `state.json` 快照，不会发送普通变更通知。后续轮询会比较人数、容量、剩余名额以及教学班新增/移除情况；检测到 `jxbxzrs < jxbrl` 时会额外发送空位告警。若已显式开启自动换班，程序从首轮起就会检查所有当前有空位的高优先级目标，而不是只等待一次“满员变为空闲”的状态变化。
 
 ## 工作原理
@@ -138,6 +155,7 @@ python monitor.py --debug
 | `state.json` | 最近一次完整教学班快照 |
 | `changes.log` | 检测到的变更及自动换班结果 |
 | `swap_state.json` | 已完成和致命失败的自动换班目标 |
+| `seat_details.json` | 仅供 GUI 方案页显示的人数/容量缓存 |
 | `captcha_debug/` | 登录调试时保存的验证码图片 |
 
 这些文件以及 `.env` 均不应提交到版本库。
@@ -160,6 +178,21 @@ C:\path\to\sjtu-monitor\.venv\Scripts\pythonw.exe C:\path\to\sjtu-monitor\monito
 ```
 
 将“起始于”设置为项目目录，便于定位日志和状态文件。
+
+## 前端开发与验证
+
+Tauri 前端由 React + TypeScript 实现，Python 后端业务规则仍由 `monitor.py`、`swap.py`、`bootstrap.py`、`config.py` 和 `gui_backend.py` 负责。不要在前端重新实现自动换课决策。
+
+常用离线检查：
+
+```powershell
+python -m py_compile config.py monitor.py swap.py bootstrap.py course_plus.py gui_backend.py gui.py
+python -m unittest -v test_gui_logic.py test_gui_responsive.py
+npm run typecheck
+npm run build
+```
+
+`npm run tauri dev` 会启动本地桌面窗口。涉及 `i.sjtu.edu.cn` 或 `course.sjtu.plus` 的按钮仍会调用真实外部接口，开发或验证时不要擅自点击联网刷新。
 
 ## 提示
 
