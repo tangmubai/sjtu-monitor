@@ -1,7 +1,8 @@
 name: Release
 
-# 推送 vX.Y.Z 标签时构建 Windows 安装包并创建草稿 Release;
-# 也可通过 workflow_dispatch 手动验证构建(不创建 Release, 产物以 artifact 形式上传)。
+# 推送 vX.Y.Z 标签时构建 Windows 安装包与 macOS 通用二进制 (Intel + Apple Silicon)
+# 并创建草稿 Release; 也可通过 workflow_dispatch 手动验证构建
+# (不创建 Release, 产物以 artifact 形式上传)。
 on:
   push:
     tags: ['v*.*.*']
@@ -11,11 +12,16 @@ permissions:
   contents: write
 
 jobs:
-  build-windows:
-    runs-on: windows-latest
-    env:
-      VITE_SJTU_RELEASE: '1'
-      SJTU_MONITOR_RELEASE: '1'
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            args: ''
+          - platform: macos-latest
+            args: '--target universal-apple-darwin'
+    runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
 
@@ -29,6 +35,8 @@ jobs:
         run: npm ci
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -37,6 +45,7 @@ jobs:
       # tauri-winres 需要 rc.exe; scripts/tauri-env.mjs 只硬编码了 SDK 10.0.26100.0,
       # 运行器 SDK 版本不同时在此按实际安装版本定位并通过 RC 环境变量传入。
       - name: Locate rc.exe
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           if (-not $env:RC) {
@@ -51,6 +60,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
+          args: ${{ matrix.args }}
           tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
           releaseName: ${{ startsWith(github.ref, 'refs/tags/') && format('交我选 {0}', github.ref_name) || '' }}
           releaseDraft: true
@@ -60,7 +70,8 @@ jobs:
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         uses: actions/upload-artifact@v4
         with:
-          name: windows-installers
+          name: installers-${{ matrix.platform }}
           path: |
             src-tauri/target/release/bundle/msi/*.msi
             src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
