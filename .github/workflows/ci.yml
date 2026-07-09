@@ -41,9 +41,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # package-lock.json 由 npm 11 生成, npm 10 (Node 20/22 自带) 的同步检查会误报
+      # 锁文件缺失 vitest 嵌套 vite 的可选 peer 依赖, 因此固定使用 Node 24 (npm 11)。
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
           cache: npm
 
       - name: Install dependencies

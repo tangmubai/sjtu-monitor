@@ -16,9 +16,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 与 ci.yml 一致: 锁文件由 npm 11 生成, 需 Node 24 (npm 11) 才能通过 npm ci 同步检查。
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
           cache: npm
 
       - name: Install dependencies
