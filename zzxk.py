@@ -1,6 +1,6 @@
 """zzxkyzb(自主选课, gnmkdm=N253512)模块接口封装 —— 生产用。
 
-由 test_full_catalog.py / test_zzxk_select_drop.py 的联网实测(2026-07-06)提炼:
+由 2026-07-06 联网实测提炼:
   - 首页页签令牌(xkkz_id + 256 位 xkkz_xh)随首页一次抓取即有效;
   - kspage/jspage 为页号范围,递增翻页,空窗口 = 该分类翻完;
   - PartDisplay 每行 = 一个教学班,含 yxzrs(已选人数),无容量;
@@ -15,7 +15,7 @@
   fetch_full_catalog(session, ...)  → bootstrap 用,枚举全部分类的课程+教学班
   fetch_seats(session, courses)     → monitor 用,查 watched 课程的已选/容量
   fetch_choosed(session)            → 该轮次当前已选课程列表
-低层(测试脚本复用): fetch_index / fetch_display_form / _build_source /
+低层调试/维护函数: fetch_index / fetch_display_form / _build_source /
   fetch_part_display / fetch_jxb_capacity / sweep_category
 """
 from __future__ import annotations

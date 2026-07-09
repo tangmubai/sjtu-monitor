@@ -31,8 +31,7 @@ jobs:
         shell: bash
         run: python -m py_compile *.py
 
-      # test_data_settings.py 及 test_choosed.py 等联网脚本不在 CI 运行范围内,
-      # 仅运行 README 中记录的两个离线单测文件。
+      # 仅运行当前保留的 Python 离线单测文件。
       - name: Unit tests
         run: python -m unittest -v test_gui_logic.py test_gui_responsive.py
 

@@ -13,6 +13,9 @@ permissions:
 jobs:
   build-windows:
     runs-on: windows-latest
+    env:
+      VITE_SJTU_RELEASE: '1'
+      SJTU_MONITOR_RELEASE: '1'
     steps:
       - uses: actions/checkout@v4
 

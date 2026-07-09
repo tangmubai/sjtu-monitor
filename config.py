@@ -4,21 +4,22 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
+import secure_store
 
 ROOT = Path(__file__).resolve().parent
 load_dotenv(ROOT / ".env")
 
 JACCOUNT_USER = os.getenv("JACCOUNT_USER", "")
-JACCOUNT_PASS = os.getenv("JACCOUNT_PASS", "")
+JACCOUNT_PASS = os.getenv("JACCOUNT_PASS") or secure_store.get_secret("JACCOUNT_PASS")
 
 # course.sjtu.plus(选课社区)账号 —— 与 jaccount 完全独立的站内账号密码
 COURSE_PLUS_EMAIL = os.getenv("COURSE_PLUS_EMAIL", "")
-COURSE_PLUS_PASSWORD = os.getenv("COURSE_PLUS_PASSWORD", "")
+COURSE_PLUS_PASSWORD = os.getenv("COURSE_PLUS_PASSWORD") or secure_store.get_secret("COURSE_PLUS_PASSWORD")
 
 SMTP_HOST = os.getenv("SMTP_HOST", "")
 SMTP_PORT = int(os.getenv("SMTP_PORT", "465"))
 SMTP_USER = os.getenv("SMTP_USER", "")
-SMTP_PASS = os.getenv("SMTP_PASS", "")
+SMTP_PASS = os.getenv("SMTP_PASS") or secure_store.get_secret("SMTP_PASS")
 MAIL_FROM = os.getenv("MAIL_FROM", SMTP_USER)
 MAIL_TO = os.getenv("MAIL_TO", SMTP_USER)
 
@@ -39,7 +40,7 @@ JXB_LIST_URL = "https://i.sjtu.edu.cn/xsxk/tjxkbkk_cxJxbTjxkBkk.html?gnmkdm=N253
 # 退选 / 选课 接口 (从新 HAR 提取)
 DROP_URL = "https://i.sjtu.edu.cn/xsxk/tjxkbkk_tuikBcTjxkBkk.html?gnmkdm=N253519"
 SELECT_URL = "https://i.sjtu.edu.cn/xsxk/tjxkbkk_xkBcZyTjxkBkk.html?gnmkdm=N253519"
-# 已选课程列表 (test_choosed.py 已验证)
+# 已选课程列表 (历史抓包验证)
 CHOOSED_URL = "https://i.sjtu.edu.cn/xsxk/tjxkbkk_cxTjxkBkkChoosedCourse.html?gnmkdm=N253519"
 # 个人课表接口,响应里的 xsxx 块含 ZYH_ID/NJDM_ID/姓名/学号 (HAR 抓包验证)
 XSGRKB_URL = "https://i.sjtu.edu.cn/kbcx/xskbcx_cxXsgrkb.html?gnmkdm=N253508"
@@ -349,8 +350,15 @@ def _quote_env_value(value: str) -> str:
     return f"'{escaped}'"
 
 
+SECRET_ENV_KEYS = {"JACCOUNT_PASS", "COURSE_PLUS_PASSWORD", "SMTP_PASS"}
+
+
 def save_env_settings(values: dict[str, str], path: Path | None = None) -> None:
-    """Atomically update selected .env keys while preserving unrelated content."""
+    """Atomically update .env while keeping real project secrets outside .env.
+
+    Tests and migration helpers may pass a custom path; in that mode the function
+    preserves the historical plain .env behavior so it stays deterministic.
+    """
     global JACCOUNT_USER, JACCOUNT_PASS
     global COURSE_PLUS_EMAIL, COURSE_PLUS_PASSWORD
     global SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, MAIL_FROM, MAIL_TO
@@ -362,7 +370,21 @@ def save_env_settings(values: dict[str, str], path: Path | None = None) -> None:
         if env_path.exists()
         else []
     )
-    pending = {str(key): str(value) for key, value in values.items()}
+    write_secrets_to_env = path is not None
+    secret_values = {
+        str(key): str(value)
+        for key, value in values.items()
+        if str(key) in SECRET_ENV_KEYS and str(value)
+    }
+    if secret_values and not write_secrets_to_env:
+        for key, value in secret_values.items():
+            secure_store.set_secret(key, value)
+
+    pending = {
+        str(key): str(value)
+        for key, value in values.items()
+        if write_secrets_to_env or str(key) not in SECRET_ENV_KEYS
+    }
     output: list[str] = []
     for line in lines:
         stripped = line.lstrip()
@@ -370,6 +392,8 @@ def save_env_settings(values: dict[str, str], path: Path | None = None) -> None:
             output.append(line)
             continue
         key = stripped.split("=", 1)[0].strip()
+        if not write_secrets_to_env and key in SECRET_ENV_KEYS:
+            continue
         if key in pending:
             output.append(f"{key}={_quote_env_value(pending.pop(key))}")
         else:
@@ -382,6 +406,8 @@ def save_env_settings(values: dict[str, str], path: Path | None = None) -> None:
     tmp.replace(env_path)
 
     for key, value in values.items():
+        if key in SECRET_ENV_KEYS and not value:
+            continue
         os.environ[key] = str(value)
     JACCOUNT_USER = str(values.get("JACCOUNT_USER", JACCOUNT_USER))
     JACCOUNT_PASS = str(values.get("JACCOUNT_PASS", JACCOUNT_PASS))

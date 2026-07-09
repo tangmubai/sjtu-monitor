@@ -1,8 +1,12 @@
-"""通知:Windows toast + SMTP 邮件。批量变更打包发送,失败不抛异常。"""
+"""通知:跨平台桌面通知 + SMTP 邮件。批量变更打包发送,失败不抛异常。"""
 from __future__ import annotations
 
+import html
 import logging
+import platform
+import shutil
 import smtplib
+import subprocess
 from email.mime.text import MIMEText
 from email.utils import formataddr
 from typing import Sequence
@@ -54,11 +58,75 @@ def _format_change_line(c: dict) -> str:
 
 
 def _toast(title: str, body: str) -> None:
+    system = platform.system()
+    if system == "Windows":
+        _windows_toast(title, body)
+    elif system == "Darwin":
+        _macos_notification(title, body)
+    elif system == "Linux":
+        _linux_notification(title, body)
+    else:
+        log.info("当前系统不支持桌面通知: %s", system or "unknown")
+
+
+def _windows_toast(title: str, body: str) -> None:
     try:
         from win11toast import toast
         toast(title, body, duration="long")
+        return
+    except Exception as e:
+        log.info("win11toast 不可用,尝试系统 Toast: %s", e)
+    script = f"""
+$ErrorActionPreference = 'Stop'
+[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null
+[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] > $null
+$xmlText = '<toast><visual><binding template="ToastGeneric"><text>{html.escape(title)}</text><text>{html.escape(body)}</text></binding></visual></toast>'
+$xml = New-Object Windows.Data.Xml.Dom.XmlDocument
+$xml.LoadXml($xmlText)
+$toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
+[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('SJTU Monitor').Show($toast)
+"""
+    try:
+        subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
     except Exception as e:
         log.warning("Windows toast 失败: %s", e)
+
+
+def _macos_notification(title: str, body: str) -> None:
+    if not shutil.which("osascript"):
+        log.info("osascript 不可用,跳过 macOS 桌面通知")
+        return
+    def apple_string(value: str) -> str:
+        return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    try:
+        subprocess.run(
+            ["osascript", "-e", f"display notification {apple_string(body)} with title {apple_string(title)}"],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception as e:
+        log.warning("macOS 通知失败: %s", e)
+
+
+def _linux_notification(title: str, body: str) -> None:
+    if not shutil.which("notify-send"):
+        log.info("notify-send 不可用,跳过 Linux 桌面通知")
+        return
+    try:
+        subprocess.run(
+            ["notify-send", "SJTU Monitor", title, body],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception as e:
+        log.warning("Linux 通知失败: %s", e)
 
 
 def _email(subject: str, body_lines: Sequence[str]) -> None:

@@ -95,6 +95,10 @@ fn python_command(root: &Path) -> (String, Vec<String>) {
     ("python".into(), Vec::new())
 }
 
+fn release_mode() -> bool {
+    !cfg!(debug_assertions) || env::var("SJTU_MONITOR_RELEASE").ok().as_deref() == Some("1")
+}
+
 fn run_backend(app: &AppHandle, command: &str, payload: Option<Value>) -> Result<Value, String> {
     let root = repo_root(app)?;
     let (program, mut args) = python_command(&root);
@@ -106,6 +110,7 @@ fn run_backend(app: &AppHandle, command: &str, payload: Option<Value>) -> Result
         .env("PYTHONUTF8", "1")
         .env("PYTHONIOENCODING", "utf-8")
         .env("PYTHONUNBUFFERED", "1")
+        .env("SJTU_MONITOR_RELEASE", if release_mode() { "1" } else { "0" })
         .stdin(if payload.is_some() {
             Stdio::piped()
         } else {
@@ -159,12 +164,13 @@ fn save_groups(app: AppHandle, input: JsonPayload) -> Result<Value, String> {
 
 #[tauri::command]
 fn set_auto_swap(app: AppHandle, input: AutoSwapPayload) -> Result<Value, String> {
+    let dry_run = if release_mode() { false } else { input.dry_run };
     run_backend(
         &app,
         "set-auto-swap",
         Some(serde_json::json!({
             "enabled": input.enabled,
-            "dry_run": input.dry_run
+            "dry_run": dry_run
         })),
     )
 }
@@ -187,7 +193,7 @@ fn start_process(
     let (program, mut args) = python_command(&root);
     args.push(root.join(&input.script).to_string_lossy().to_string());
     args.extend(input.args);
-    if input.debug {
+    if input.debug && !release_mode() {
         args.push("--debug".to_string());
     }
 
@@ -197,6 +203,7 @@ fn start_process(
         .env("PYTHONUTF8", "1")
         .env("PYTHONIOENCODING", "utf-8")
         .env("PYTHONUNBUFFERED", "1")
+        .env("SJTU_MONITOR_RELEASE", if release_mode() { "1" } else { "0" })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()

@@ -28,6 +28,8 @@ export interface SettingsPayload {
   jaccount_user: string;
   jaccount_pass: string;
   course_plus_password: string;
+  has_jaccount_pass?: boolean;
+  has_course_plus_password?: boolean;
   poll_min: number;
   poll_max: number;
   email_enabled: boolean;
@@ -35,6 +37,8 @@ export interface SettingsPayload {
   smtp_port: number;
   smtp_user: string;
   smtp_pass: string;
+  has_smtp_pass?: boolean;
+  secret_backend?: string;
   mail_from: string;
   mail_to: string;
 }

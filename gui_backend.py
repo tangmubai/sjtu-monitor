@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from datetime import datetime
@@ -15,9 +16,14 @@ from pathlib import Path
 from typing import Any
 
 import config
+import secure_store
 
 
 ROOT = Path(__file__).resolve().parent
+
+
+def is_release_mode() -> bool:
+    return os.getenv("SJTU_MONITOR_RELEASE", "").strip() == "1"
 
 
 def read_json(path: Path, default: Any) -> Any:
@@ -439,15 +445,19 @@ def build_snapshot() -> dict[str, Any]:
         },
         "settings": {
             "jaccount_user": config.JACCOUNT_USER,
-            "jaccount_pass": config.JACCOUNT_PASS,
-            "course_plus_password": config.COURSE_PLUS_PASSWORD,
+            "jaccount_pass": "",
+            "course_plus_password": "",
+            "has_jaccount_pass": bool(config.JACCOUNT_PASS),
+            "has_course_plus_password": bool(config.COURSE_PLUS_PASSWORD),
             "poll_min": config.POLL_MIN,
             "poll_max": config.POLL_MAX,
             "email_enabled": config.EMAIL_ENABLED,
             "smtp_host": config.SMTP_HOST,
             "smtp_port": config.SMTP_PORT,
             "smtp_user": config.SMTP_USER,
-            "smtp_pass": config.SMTP_PASS,
+            "smtp_pass": "",
+            "has_smtp_pass": bool(config.SMTP_PASS),
+            "secret_backend": secure_store.backend_name(),
             "mail_from": config.MAIL_FROM,
             "mail_to": config.MAIL_TO,
         },
@@ -556,21 +566,26 @@ def save_settings(payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("poll interval must be positive and max >= min")
     if not 1 <= smtp_port <= 65535:
         raise ValueError("smtp_port must be in 1..65535")
-    config.save_env_settings(
-        {
-            "JACCOUNT_USER": str(payload.get("jaccount_user", "")).strip(),
-            "JACCOUNT_PASS": str(payload.get("jaccount_pass", "")),
-            "COURSE_PLUS_PASSWORD": str(payload.get("course_plus_password", "")),
-            "POLL_MIN": str(poll_min),
-            "POLL_MAX": str(poll_max),
-            "SMTP_HOST": str(payload.get("smtp_host", "")).strip(),
-            "SMTP_PORT": str(smtp_port),
-            "SMTP_USER": str(payload.get("smtp_user", "")).strip(),
-            "SMTP_PASS": str(payload.get("smtp_pass", "")),
-            "MAIL_FROM": str(payload.get("mail_from", "")).strip(),
-            "MAIL_TO": str(payload.get("mail_to", "")).strip(),
-        }
-    )
+    env_values = {
+        "JACCOUNT_USER": str(payload.get("jaccount_user", "")).strip(),
+        "POLL_MIN": str(poll_min),
+        "POLL_MAX": str(poll_max),
+        "SMTP_HOST": str(payload.get("smtp_host", "")).strip(),
+        "SMTP_PORT": str(smtp_port),
+        "SMTP_USER": str(payload.get("smtp_user", "")).strip(),
+        "MAIL_FROM": str(payload.get("mail_from", "")).strip(),
+        "MAIL_TO": str(payload.get("mail_to", "")).strip(),
+    }
+    secret_fields = {
+        "JACCOUNT_PASS": "jaccount_pass",
+        "COURSE_PLUS_PASSWORD": "course_plus_password",
+        "SMTP_PASS": "smtp_pass",
+    }
+    for env_key, payload_key in secret_fields.items():
+        value = str(payload.get(payload_key, ""))
+        if value:
+            env_values[env_key] = value
+    config.save_env_settings(env_values)
     config.update_user_settings(
         notifications={"email_enabled": bool(payload.get("email_enabled"))}
     )
@@ -578,10 +593,13 @@ def save_settings(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def set_auto_swap(payload: dict[str, Any]) -> dict[str, Any]:
+    dry_run = bool(payload.get("dry_run"))
+    if is_release_mode() and dry_run:
+        raise ValueError("发行版不支持演练模式")
     config.update_user_settings(
         auto_swap={
             "enabled": bool(payload.get("enabled")),
-            "dry_run": bool(payload.get("dry_run")),
+            "dry_run": dry_run,
         }
     )
     return {"ok": True}

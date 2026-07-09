@@ -116,6 +116,8 @@ const emptySettings: SettingsPayload = {
   mail_to: "",
 };
 
+const RELEASE_MODE = import.meta.env.VITE_SJTU_RELEASE === "1";
+
 function nowTime() {
   return new Date().toLocaleTimeString("zh-CN", { hour12: false });
 }
@@ -381,7 +383,7 @@ function App() {
 
   async function run(label: string, script: string, args: string[] = []) {
     try {
-      await startProcess(label, script, args, debug);
+      await startProcess(label, script, args, debug && !RELEASE_MODE);
       setRunning((current) => new Set(current).add(label));
       setRuntimeLines((lines) => [
         ...lines.slice(-499),
@@ -488,8 +490,12 @@ function App() {
   }
 
   async function toggleAutoSwap(enabled: boolean, dryRun: boolean) {
+    if (RELEASE_MODE && dryRun) {
+      setStatus("发行版不提供演练模式");
+      return;
+    }
     if (enabled && !dryRun && snapshot?.metrics.auto_swap !== "enabled") {
-      const ok = window.confirm("真实自动换课会执行退课和选课。建议先演练，确定继续？");
+      const ok = window.confirm("真实自动换课会执行退课和选课。确定继续？");
       if (!ok) return;
     }
     try {
@@ -527,12 +533,14 @@ function App() {
             );
           })}
         </nav>
-        <div className="sidebarFooter">
-          <label className="checkLine">
-            <input type="checkbox" checked={debug} onChange={(event) => setDebug(event.target.checked)} />
-            Debug
-          </label>
-        </div>
+        {!RELEASE_MODE && (
+          <div className="sidebarFooter">
+            <label className="checkLine">
+              <input type="checkbox" checked={debug} onChange={(event) => setDebug(event.target.checked)} />
+              Debug
+            </label>
+          </div>
+        )}
       </aside>
 
       <main className="main">
@@ -578,7 +586,8 @@ function App() {
                   autoSwap={snapshot.metrics.auto_swap}
                   interval={snapshot.metrics.interval}
                   running={running}
-                  debug={debug}
+                  debug={debug && !RELEASE_MODE}
+                  releaseMode={RELEASE_MODE}
                   onRunOnce={() => run("once", "monitor.py", ["--once"])}
                   onStart={() => run("monitor", "monitor.py")}
                   onStop={() => stopProcess("monitor")}
@@ -828,7 +837,7 @@ function App() {
                   </div>
                   <div className="buttonRow">
                     <button onClick={() => toggleAutoSwap(false, false)}><Pause size={16} /> 关闭</button>
-                    <button onClick={() => toggleAutoSwap(true, true)}><Eye size={16} /> 演练</button>
+                    {!RELEASE_MODE && <button onClick={() => toggleAutoSwap(true, true)}><Eye size={16} /> 演练</button>}
                     <button className="danger" onClick={() => toggleAutoSwap(true, false)}><ShieldAlert size={16} /> 真实启用</button>
                   </div>
                 </section>
@@ -933,8 +942,9 @@ function App() {
                 <section className="panel accountPanel">
                   <div className="panelHeader"><h2>账号</h2></div>
                   <Field label="JAccount" value={settings.jaccount_user} onChange={(value) => setSettings({ ...settings, jaccount_user: value })} />
-                  <Field label="JAccount 密码" type="password" value={settings.jaccount_pass} onChange={(value) => setSettings({ ...settings, jaccount_pass: value })} />
-                  <Field label="选课社区密码" type="password" value={settings.course_plus_password} onChange={(value) => setSettings({ ...settings, course_plus_password: value })} />
+                  <Field label="JAccount 密码" type="password" value={settings.jaccount_pass} placeholder={settings.has_jaccount_pass ? "已安全保存，留空不修改" : "未保存"} onChange={(value) => setSettings({ ...settings, jaccount_pass: value })} />
+                  <Field label="选课社区密码" type="password" value={settings.course_plus_password} placeholder={settings.has_course_plus_password ? "已安全保存，留空不修改" : "未保存"} onChange={(value) => setSettings({ ...settings, course_plus_password: value })} />
+                  <p className="settingsHint">密码不回显；当前安全存储：{settings.secret_backend || "未知"}。</p>
                 </section>
                 <section className="panel pollingPanel">
                   <div className="panelHeader"><h2>轮询</h2></div>
@@ -954,7 +964,7 @@ function App() {
                     <Field label="SMTP Host" value={settings.smtp_host} onChange={(value) => setSettings({ ...settings, smtp_host: value })} />
                     <Field label="SMTP Port" type="number" value={String(settings.smtp_port)} onChange={(value) => setSettings({ ...settings, smtp_port: Number(value) })} />
                     <Field label="SMTP User" value={settings.smtp_user} onChange={(value) => setSettings({ ...settings, smtp_user: value })} />
-                    <Field label="SMTP Pass" type="password" value={settings.smtp_pass} onChange={(value) => setSettings({ ...settings, smtp_pass: value })} />
+                    <Field label="SMTP Pass" type="password" value={settings.smtp_pass} placeholder={settings.has_smtp_pass ? "已安全保存，留空不修改" : "未保存"} onChange={(value) => setSettings({ ...settings, smtp_pass: value })} />
                     <Field label="发件人" value={settings.mail_from} onChange={(value) => setSettings({ ...settings, mail_from: value })} />
                     <Field label="收件人" value={settings.mail_to} onChange={(value) => setSettings({ ...settings, mail_to: value })} />
                   </div>
@@ -1042,6 +1052,7 @@ function MonitorStatusPanel({
   interval,
   running,
   debug,
+  releaseMode,
   onRunOnce,
   onStart,
   onStop,
@@ -1050,6 +1061,7 @@ function MonitorStatusPanel({
   interval: string;
   running: Set<string>;
   debug: boolean;
+  releaseMode: boolean;
   onRunOnce: () => void;
   onStart: () => void;
   onStop: () => void;
@@ -1079,10 +1091,12 @@ function MonitorStatusPanel({
           <small>自动换课</small>
           <Badge tone={autoSwapTone}>{statusText(autoSwap)}</Badge>
         </div>
-        <div className="monitorCard">
-          <small>调试输出</small>
-          <strong>{debug ? "开启" : "关闭"}</strong>
-        </div>
+        {!releaseMode && (
+          <div className="monitorCard">
+            <small>调试输出</small>
+            <strong>{debug ? "开启" : "关闭"}</strong>
+          </div>
+        )}
       </div>
       <div className="monitorActions">
         <Button variant="outline" onClick={onRunOnce} disabled={onceRunning}>
@@ -1120,16 +1134,18 @@ function Field({
   value,
   onChange,
   type = "text",
+  placeholder,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   type?: string;
+  placeholder?: string;
 }) {
   return (
     <label className="field">
       <span>{label}</span>
-      <input type={type} value={value} onChange={(event) => onChange(event.target.value)} />
+      <input type={type} value={value} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} />
     </label>
   );
 }

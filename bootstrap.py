@@ -131,7 +131,7 @@ def fetch_xsxx(
 
 
 def fetch_choosed(session: requests.Session) -> list[dict]:
-    """当前已选课程列表(接口已在 test_choosed.py 验证)。"""
+    """当前已选课程列表。"""
     common = config.query_common("display")
     data = {
         k: common.get(k, "")

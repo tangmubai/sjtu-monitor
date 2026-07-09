@@ -1,4 +1,5 @@
 .env
+secrets.local.json
 state.json
 swap_state.json
 priority_groups.json
