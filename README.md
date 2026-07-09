@@ -9,6 +9,8 @@
 
 - Python 3.10 或更高版本
 - Windows 10/11（桌面通知依赖 `win11toast`；其他系统仍可使用日志和邮件）
+- Node.js 20 或更高版本（Tauri/React 前端）
+- Rust stable 工具链（Tauri 桌面壳）
 - 可正常访问交我办与 jAccount
 
 ## 安装
@@ -20,6 +22,7 @@ cd sjtu-monitor
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
+npm install
 
 Copy-Item .env.example .env
 notepad .env
@@ -127,7 +130,13 @@ python monitor.py --debug
 python gui.py
 ```
 
-`gui.py` 是基于 PySide6/Qt 的本地桌面窗口，支持运行监控、查看课程快照、换课记录与合并日志，并通过“课程目录 → 选课方案 → 优先级”流程配置教学班。课程目录只保存和显示空位状态；教学班加入方案后才异步查询人数与容量，结果写入 `seat_details.json`，不会改写监控基线 `state.json`。
+`gui.py` 现在是 Tauri 桌面前端的兼容启动器。它会把当前 conda 环境中的 Python 解释器传给 Tauri/Rust 桥接层，再由桥接层调用 `gui_backend.py`、`monitor.py` 和 `bootstrap.py`。开发模式也可直接运行：
+
+```powershell
+npm run tauri dev
+```
+
+Tauri/React 前端支持运行监控、查看课程快照、换课记录与合并日志，并通过“课程目录 → 选课方案 → 优先级”流程配置教学班。课程目录只保存和显示空位状态；教学班加入方案后才异步查询人数与容量，结果写入 `seat_details.json`，不会改写监控基线 `state.json`。
 
 课程目录以“课程名称 · 教师”为主标题，时间、地点、课程号和教学班号作为摘要；选中教学班后，下方会显示可复制的完整教师、时间、地点和 ID 信息。搜索支持课程、教师、编号、时间与地点。
 
@@ -173,6 +182,21 @@ C:\path\to\sjtu-monitor\.venv\Scripts\pythonw.exe C:\path\to\sjtu-monitor\monito
 ```
 
 将“起始于”设置为项目目录，便于定位日志和状态文件。
+
+## 前端开发与验证
+
+Tauri 前端由 React + TypeScript 实现，Python 后端业务规则仍由 `monitor.py`、`swap.py`、`bootstrap.py`、`config.py` 和 `gui_backend.py` 负责。不要在前端重新实现自动换课决策。
+
+常用离线检查：
+
+```powershell
+python -m py_compile config.py monitor.py swap.py bootstrap.py course_plus.py gui_backend.py gui.py
+python -m unittest -v test_gui_logic.py test_gui_responsive.py
+npm run typecheck
+npm run build
+```
+
+`npm run tauri dev` 会启动本地桌面窗口。涉及 `i.sjtu.edu.cn` 或 `course.sjtu.plus` 的按钮仍会调用真实外部接口，开发或验证时不要擅自点击联网刷新。
 
 ## 提示
 

@@ -88,6 +88,22 @@ def fetch_page_params(session: requests.Session) -> dict[str, str]:
     return params
 
 
+def xsxx_query_variants(term: tuple[str, str] | None = None) -> list[dict]:
+    variants: list[dict] = [{"xnm": "", "xqm": "", "kzlx": "ck"}]
+    candidates = []
+    if term and term[0]:
+        candidates.append((term[0], term[1] or ""))
+    candidates.append((config.XKXNM, config.XKXQM))
+    seen = {("", "")}
+    for xnm, xqm in candidates:
+        key = (str(xnm or ""), str(xqm or ""))
+        if not key[0] or key in seen:
+            continue
+        seen.add(key)
+        variants.append({"xnm": key[0], "xqm": key[1], "kzlx": "ck"})
+    return variants
+
+
 def fetch_xsxx(
     session: requests.Session, term: tuple[str, str] | None = None
 ) -> dict:
@@ -96,10 +112,7 @@ def fetch_xsxx(
     实测(2026-07):空学年学期服务端返回 null,须带当前学期重试;
     学期提示 term=(xnm, xqm) 可取自 zzxk 首页 hidden 的 xkxnm/xkxqm。
     """
-    variants: list[dict] = [{"xnm": "", "xqm": "", "kzlx": "ck"}]
-    if term and term[0]:
-        variants.append({"xnm": term[0], "xqm": term[1] or "", "kzlx": "ck"})
-    for data in variants:
+    for data in xsxx_query_variants(term):
         r = session.post(
             config.XSGRKB_URL, data=data,
             headers=_HEADERS, timeout=15, allow_redirects=False,

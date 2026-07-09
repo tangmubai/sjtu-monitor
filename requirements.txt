@@ -4,4 +4,3 @@ pillow>=10.0.0
 win11toast>=0.35
 python-dotenv>=1.0.0
 beautifulsoup4>=4.12.0
-PySide6-Essentials>=6.10,<7
