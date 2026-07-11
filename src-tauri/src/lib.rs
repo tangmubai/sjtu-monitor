@@ -81,13 +81,6 @@ fn python_command(root: &Path) -> (String, Vec<String>) {
             return (value, Vec::new());
         }
     }
-    let conda_bat = PathBuf::from(r"C:\Users\TMB07\miniconda3\condabin\conda.bat");
-    if conda_bat.exists() {
-        return (
-            conda_bat.to_string_lossy().to_string(),
-            vec!["run".into(), "-n".into(), "sjtu-monitor".into(), "python".into()],
-        );
-    }
     let local = root.join(".venv").join("Scripts").join("python.exe");
     if local.exists() {
         return (local.to_string_lossy().to_string(), Vec::new());
@@ -95,21 +88,95 @@ fn python_command(root: &Path) -> (String, Vec<String>) {
     ("python".into(), Vec::new())
 }
 
+/// 打包后随应用一起分发的独立 Python 后端(PyInstaller onedir),文件名 sjtu-backend[.exe]。
+fn locate_sidecar(app: &AppHandle) -> Option<PathBuf> {
+    let name = if cfg!(windows) {
+        "sjtu-backend.exe"
+    } else {
+        "sjtu-backend"
+    };
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Ok(res) = app.path().resource_dir() {
+        candidates.push(res.join("sjtu-backend").join(name));
+        candidates.push(res.join("resources").join("sjtu-backend").join(name));
+    }
+    if let Ok(exe) = env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            candidates.push(dir.join("sjtu-backend").join(name));
+            candidates.push(dir.join("resources").join("sjtu-backend").join(name));
+        }
+    }
+    candidates.into_iter().find(|p| p.is_file())
+}
+
+/// 后端调用方式:优先用打包 sidecar(独立发行版);找不到时回退到 `python <脚本>`(源码/开发模式)。
+struct Backend {
+    program: String,
+    prefix: Vec<String>,
+    bundled: bool,
+    root: PathBuf,
+    data_dir: PathBuf,
+}
+
+impl Backend {
+    /// 构造 `program` 之后、命令参数之前的基础参数(含脚本标识)。
+    fn base_args(&self, script: &str) -> Vec<String> {
+        let mut args = self.prefix.clone();
+        if self.bundled {
+            // sidecar 按脚本名(gui_backend.py / monitor.py / bootstrap.py)自行分发
+            args.push(script.to_string());
+        } else {
+            args.push(self.root.join(script).to_string_lossy().to_string());
+        }
+        args
+    }
+}
+
+fn resolve_backend(app: &AppHandle) -> Result<Backend, String> {
+    // 可写数据目录:装机后不能写安装目录,统一用平台 app-data 目录。
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|err| format!("cannot resolve app data dir: {err}"))?;
+    let _ = std::fs::create_dir_all(&data_dir);
+
+    if let Some(sidecar) = locate_sidecar(app) {
+        return Ok(Backend {
+            program: sidecar.to_string_lossy().to_string(),
+            prefix: Vec::new(),
+            bundled: true,
+            root: data_dir.clone(),
+            data_dir,
+        });
+    }
+
+    // 开发/源码模式:仓库内有 gui_backend.py,用 python 直接跑;数据仍写仓库根(行为不变)。
+    let root = repo_root(app)?;
+    let (program, prefix) = python_command(&root);
+    Ok(Backend {
+        program,
+        prefix,
+        bundled: false,
+        data_dir: root.clone(),
+        root,
+    })
+}
+
 fn release_mode() -> bool {
     !cfg!(debug_assertions) || env::var("SJTU_MONITOR_RELEASE").ok().as_deref() == Some("1")
 }
 
 fn run_backend(app: &AppHandle, command: &str, payload: Option<Value>) -> Result<Value, String> {
-    let root = repo_root(app)?;
-    let (program, mut args) = python_command(&root);
-    args.push(root.join("gui_backend.py").to_string_lossy().to_string());
+    let backend = resolve_backend(app)?;
+    let mut args = backend.base_args("gui_backend.py");
     args.push(command.to_string());
-    let mut child = Command::new(program)
+    let mut child = Command::new(&backend.program)
         .args(args)
-        .current_dir(root)
+        .current_dir(&backend.data_dir)
         .env("PYTHONUTF8", "1")
         .env("PYTHONIOENCODING", "utf-8")
         .env("PYTHONUNBUFFERED", "1")
+        .env("SJTU_MONITOR_DATA_DIR", &backend.data_dir)
         .env("SJTU_MONITOR_RELEASE", if release_mode() { "1" } else { "0" })
         .stdin(if payload.is_some() {
             Stdio::piped()
@@ -189,20 +256,20 @@ fn start_process(
         return Err(format!("{} is already running", input.label));
     }
 
-    let root = repo_root(&app)?;
-    let (program, mut args) = python_command(&root);
-    args.push(root.join(&input.script).to_string_lossy().to_string());
+    let backend = resolve_backend(&app)?;
+    let mut args = backend.base_args(&input.script);
     args.extend(input.args);
     if input.debug && !release_mode() {
         args.push("--debug".to_string());
     }
 
-    let mut child = Command::new(program)
+    let mut child = Command::new(&backend.program)
         .args(args)
-        .current_dir(root)
+        .current_dir(&backend.data_dir)
         .env("PYTHONUTF8", "1")
         .env("PYTHONIOENCODING", "utf-8")
         .env("PYTHONUNBUFFERED", "1")
+        .env("SJTU_MONITOR_DATA_DIR", &backend.data_dir)
         .env("SJTU_MONITOR_RELEASE", if release_mode() { "1" } else { "0" })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

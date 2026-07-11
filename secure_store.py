@@ -10,9 +10,12 @@ import subprocess
 from ctypes import wintypes
 from pathlib import Path
 
+import apppaths
+
 SERVICE = "com.tangmubai.sjtu-monitor"
 ROOT = Path(__file__).resolve().parent
-WINDOWS_SECRET_FILE = ROOT / "secrets.local.json"
+# 与 config.DATA_DIR 同源:打包后写到用户级目录而非只读的安装目录。
+WINDOWS_SECRET_FILE = apppaths.data_dir() / "secrets.local.json"
 
 
 class SecretStoreError(RuntimeError):
