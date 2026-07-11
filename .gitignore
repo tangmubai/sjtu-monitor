@@ -31,3 +31,7 @@ src-tauri/target/
 src-tauri/gen/
 *.tsbuildinfo
 node_modules
+# PyInstaller 冻结产物(sidecar 由 CI 构建,不入库)
+src-tauri/resources/
+build/
+secrets.local.json

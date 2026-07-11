@@ -4,10 +4,14 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
+import apppaths
 import secure_store
 
 ROOT = Path(__file__).resolve().parent
-load_dotenv(ROOT / ".env")
+# 运行期可写数据目录:源码运行/测试时 == ROOT(行为不变);打包成独立程序后
+# 指向用户级目录(见 apppaths.py),避免装到 Program Files 下写不进状态文件。
+DATA_DIR = apppaths.data_dir()
+load_dotenv(DATA_DIR / ".env")
 
 JACCOUNT_USER = os.getenv("JACCOUNT_USER", "")
 JACCOUNT_PASS = os.getenv("JACCOUNT_PASS") or secure_store.get_secret("JACCOUNT_PASS")
@@ -137,9 +141,9 @@ _DEFAULT_PRIORITY_GROUPS: dict[str, dict] = {
 #   auto_swap       自动换课开关 {enabled, dry_run}
 #   priority_groups 优先级组(GUI"选课设置"页编辑,整体覆盖)
 # 文件里只需写想覆盖的分区,缺省自动回落到代码内置默认值。
-USER_SETTINGS_FILE = ROOT / "user_settings.json"
+USER_SETTINGS_FILE = DATA_DIR / "user_settings.json"
 # 旧版单独存优先级组的文件,存在且新文件缺失时自动迁移读取
-_LEGACY_PRIORITY_FILE = ROOT / "priority_groups.json"
+_LEGACY_PRIORITY_FILE = DATA_DIR / "priority_groups.json"
 
 _DEFAULT_SETTINGS = {
     "term": {"xkxnm": "2026", "xkxqm": "3"},
@@ -317,17 +321,17 @@ JACCOUNT_ENTRY_URL = "https://i.sjtu.edu.cn/jaccountlogin"
 JACCOUNT_CAPTCHA_URL = "https://jaccount.sjtu.edu.cn/jaccount/captcha"
 JACCOUNT_ULOGIN_URL = "https://jaccount.sjtu.edu.cn/jaccount/ulogin"
 
-STATE_FILE = ROOT / "state.json"
-LOG_FILE = ROOT / "changes.log"
-CAPTCHA_DEBUG_DIR = ROOT / "captcha_debug"
-SWAP_STATE_FILE = ROOT / "swap_state.json"
+STATE_FILE = DATA_DIR / "state.json"
+LOG_FILE = DATA_DIR / "changes.log"
+CAPTCHA_DEBUG_DIR = DATA_DIR / "captcha_debug"
+SWAP_STATE_FILE = DATA_DIR / "swap_state.json"
 # bootstrap.py 抓取的课程目录(全部可选课程+教学班+当前已选),GUI"选课设置"页读取
-CATALOG_FILE = ROOT / "catalog.json"
+CATALOG_FILE = DATA_DIR / "catalog.json"
 # zzxkyzb 监控用的教学班容量缓存(容量基本不变,PartDisplay 不返回,JxbWithKch 查一次后缓存)
-ZZXK_CAPACITY_FILE = ROOT / "zzxk_capacity.json"
-SEAT_DETAILS_FILE = ROOT / "seat_details.json"
+ZZXK_CAPACITY_FILE = DATA_DIR / "zzxk_capacity.json"
+SEAT_DETAILS_FILE = DATA_DIR / "seat_details.json"
 # course.sjtu.plus 评分缓存(按 kch 键存,GUI"选课设置"页展示用)
-RATINGS_FILE = ROOT / "ratings.json"
+RATINGS_FILE = DATA_DIR / "ratings.json"
 
 # 课程分类代码 → 名称(zzxkyzb 首页页签实测 + 体育课 06)
 KKLX_NAMES = {
@@ -364,7 +368,7 @@ def save_env_settings(values: dict[str, str], path: Path | None = None) -> None:
     global SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, MAIL_FROM, MAIL_TO
     global POLL_MIN, POLL_MAX
 
-    env_path = path or ROOT / ".env"
+    env_path = path or DATA_DIR / ".env"
     lines = (
         env_path.read_text("utf-8").splitlines()
         if env_path.exists()
