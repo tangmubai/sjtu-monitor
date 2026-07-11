@@ -1,5 +1,11 @@
 import unittest
+import os
+import tempfile
+from pathlib import Path
+from unittest.mock import patch
 
+import apppaths
+import config
 from gui_backend import (
     availability,
     course_summary,
@@ -132,6 +138,32 @@ class BootstrapIdentityTests(unittest.TestCase):
             variants.count({"xnm": "2026", "xqm": "3", "kzlx": "ck"}),
             1,
         )
+
+
+class ReleaseInitializationTests(unittest.TestCase):
+    def test_release_defaults_have_no_builtin_courses_or_groups(self):
+        self.assertEqual(config.default_settings()["courses"], {})
+        self.assertEqual(config.default_priority_groups(), {})
+        self.assertFalse(config.default_settings()["onboarding"]["completed"])
+
+    def test_prerelease_data_is_cleared_only_once(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for name in ("user_settings.json", "catalog.json", "state.json", ".env", "secrets.local.json"):
+                (root / name).write_text("test", "utf-8")
+            (root / "captcha_debug").mkdir()
+            (root / "captcha_debug" / "captcha.png").write_bytes(b"test")
+
+            with patch.dict(os.environ, {"SJTU_MONITOR_RELEASE": "1"}):
+                apppaths.prepare_release_data(root)
+                self.assertTrue((root / apppaths.RELEASE_DATA_MARKER).exists())
+                self.assertFalse((root / "catalog.json").exists())
+                self.assertFalse((root / "secrets.local.json").exists())
+                self.assertFalse((root / "captcha_debug").exists())
+
+                (root / "state.json").write_text("keep", "utf-8")
+                apppaths.prepare_release_data(root)
+                self.assertEqual((root / "state.json").read_text("utf-8"), "keep")
 
 
 if __name__ == "__main__":

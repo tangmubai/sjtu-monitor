@@ -19,6 +19,14 @@ import sys
 from pathlib import Path
 
 
+def _configure_utf8_stdio() -> None:
+    """保证 Windows windowed sidecar 的管道始终输出严格 UTF-8。"""
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if stream is not None and hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="strict")
+
+
 def _stem(target: str) -> str:
     return Path(target).name.lower().removesuffix(".py")
 
@@ -32,11 +40,12 @@ def _selfcheck() -> int:
     import ddddocr
 
     ddddocr.DdddOcr(beta=True, show_ad=False)
-    print("selfcheck ok")
+    print("selfcheck ok: 中文编码验证：交我选")
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
+    _configure_utf8_stdio()
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv:
         print("usage: sjtu-backend <script.py|selfcheck> [args...]", file=sys.stderr)

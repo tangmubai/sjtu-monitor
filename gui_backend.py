@@ -461,6 +461,13 @@ def build_snapshot() -> dict[str, Any]:
             "mail_from": config.MAIL_FROM,
             "mail_to": config.MAIL_TO,
         },
+        "onboarding": {
+            "completed": bool(config.USER_SETTINGS["onboarding"]["completed"]),
+            "has_account": bool(config.JACCOUNT_USER and config.JACCOUNT_PASS),
+            "catalog_ready": bool(
+                model.catalog.get("courses") or model.catalog.get("choosed")
+            ),
+        },
         "user": {
             "name": user.get("xm") or "-",
             "student_id": user.get("xh") or "-",
@@ -605,6 +612,16 @@ def set_auto_swap(payload: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True}
 
 
+def complete_onboarding() -> dict[str, Any]:
+    if not config.JACCOUNT_USER or not config.JACCOUNT_PASS:
+        raise ValueError("请先保存 JAccount 账号和密码")
+    catalog = read_json(config.CATALOG_FILE, {})
+    if not catalog.get("courses") and not catalog.get("choosed"):
+        raise ValueError("请先同步课程目录")
+    config.update_user_settings(onboarding={"completed": True})
+    return {"ok": True}
+
+
 def read_payload() -> dict[str, Any]:
     raw = sys.stdin.read()
     if not raw.strip():
@@ -626,6 +643,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("save-settings")
     sub.add_parser("save-groups")
     sub.add_parser("set-auto-swap")
+    sub.add_parser("complete-onboarding")
     args = parser.parse_args(argv)
     try:
         if args.cmd == "snapshot":
@@ -636,6 +654,8 @@ def main(argv: list[str] | None = None) -> int:
             emit(save_groups(read_payload()))
         elif args.cmd == "set-auto-swap":
             emit(set_auto_swap(read_payload()))
+        elif args.cmd == "complete-onboarding":
+            emit(complete_onboarding())
         return 0
     except Exception as exc:
         emit({"ok": False, "error": str(exc)})

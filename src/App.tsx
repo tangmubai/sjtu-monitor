@@ -66,6 +66,7 @@ import {
   PriorityGroup,
   SettingsPayload,
   Snapshot,
+  completeOnboarding,
   isTauri,
   loadSnapshot,
   pollProcesses,
@@ -214,6 +215,7 @@ function App() {
   const [newGroupName, setNewGroupName] = useState("");
   const [newGroupOpen, setNewGroupOpen] = useState(false);
   const [savedGroupsSignature, setSavedGroupsSignature] = useState("");
+  const [onboardingStep, setOnboardingStep] = useState<1 | 2 | 3>(1);
 
   const groupsSignature = JSON.stringify(
     groups.map((group) => ({
@@ -232,6 +234,13 @@ function App() {
   useEffect(() => {
     persistThemePreference(themePreference);
   }, [themePreference]);
+
+  useEffect(() => {
+    if (!snapshot || snapshot.onboarding.completed) return;
+    if (snapshot.onboarding.catalog_ready) setOnboardingStep(3);
+    else if (snapshot.onboarding.has_account) setOnboardingStep(2);
+    else setOnboardingStep(1);
+  }, [snapshot]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !window.matchMedia) return;
@@ -489,6 +498,42 @@ function App() {
     }
   }
 
+  async function saveOnboardingAccount() {
+    if (!settings.jaccount_user.trim()) {
+      setStatus("请输入 JAccount 账号");
+      return;
+    }
+    if (!settings.jaccount_pass && !settings.has_jaccount_pass) {
+      setStatus("请输入 JAccount 密码");
+      return;
+    }
+    setBusy(true);
+    try {
+      await saveSettings(settings);
+      await refresh();
+      setOnboardingStep(2);
+      setStatus("账号已安全保存；同步只会在你点击按钮后开始");
+    } catch (error) {
+      setStatus(String(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function finishOnboarding() {
+    setBusy(true);
+    try {
+      await completeOnboarding();
+      await refresh();
+      setPage("courses");
+      setStatus("初始化完成，请创建你的选课方案");
+    } catch (error) {
+      setStatus(String(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function toggleAutoSwap(enabled: boolean, dryRun: boolean) {
     if (RELEASE_MODE && dryRun) {
       setStatus("发行版不提供演练模式");
@@ -505,6 +550,68 @@ function App() {
     } catch (error) {
       setStatus(String(error));
     }
+  }
+
+  if (snapshot && !snapshot.onboarding.completed) {
+    const onboardingLogs = runtimeLines
+      .filter((line) => line.source === "bootstrap")
+      .slice(-8);
+    return (
+      <div className={`onboardingShell theme-${theme}`}>
+        <section className="onboardingCard">
+          <div className="onboardingBrand">
+            <span className="brandMark">交</span>
+            <div><strong>欢迎使用交我选</strong><p>完成基础设置后再创建自己的监控方案</p></div>
+          </div>
+          <div className="onboardingSteps" aria-label="初始化进度">
+            {["保存账号", "同步课程", "配置方案"].map((label, index) => (
+              <div className={onboardingStep >= index + 1 ? "active" : ""} key={label}>
+                <span>{index + 1}</span><small>{label}</small>
+              </div>
+            ))}
+          </div>
+
+          {onboardingStep === 1 && (
+            <div className="onboardingBody">
+              <div><h1>连接 JAccount</h1><p>凭据保存在 Windows DPAPI 安全存储中。本步骤不会发起网络请求。</p></div>
+              <div className="onboardingForm">
+                <Field label="JAccount" value={settings.jaccount_user} onChange={(value) => setSettings({ ...settings, jaccount_user: value })} />
+                <Field label="JAccount 密码" type="password" value={settings.jaccount_pass} placeholder={settings.has_jaccount_pass ? "已安全保存，留空不修改" : "请输入密码"} onChange={(value) => setSettings({ ...settings, jaccount_pass: value })} />
+              </div>
+              <div className="onboardingActions"><Button onClick={saveOnboardingAccount} disabled={busy}><Save />保存并继续</Button></div>
+            </div>
+          )}
+
+          {onboardingStep === 2 && (
+            <div className="onboardingBody">
+              <div><h1>同步课程目录</h1><p>只有点击下方按钮后才会登录教务系统并获取用户信息、全量课程和当前已选课程。</p></div>
+              <div className="syncNotice">
+                <Download size={28} />
+                <div><strong>{running.has("bootstrap") ? "正在同步课程" : "准备同步"}</strong><p>同步失败时可返回修改账号后重试，不会自动启动监控或换课。</p></div>
+              </div>
+              {onboardingLogs.length > 0 && <div className="onboardingConsole">{onboardingLogs.map((line, index) => <p key={`${line.time}-${index}`}>{line.text}</p>)}</div>}
+              <div className="onboardingActions split">
+                <Button variant="outline" onClick={() => setOnboardingStep(1)} disabled={running.has("bootstrap")}>返回修改账号</Button>
+                <Button onClick={() => run("bootstrap", "bootstrap.py")} disabled={running.has("bootstrap")}><RefreshCw className={running.has("bootstrap") ? "animate-spin" : ""} />{running.has("bootstrap") ? "同步中" : "开始同步课程"}</Button>
+              </div>
+            </div>
+          )}
+
+          {onboardingStep === 3 && (
+            <div className="onboardingBody">
+              <div><h1>创建自己的选课方案</h1><p>发行版不再内置任何课程或方案。进入课程工作台后，新建方案并按从高到低排列教学班，当前已选班放在末尾。</p></div>
+              <div className="setupRules">
+                <p><Check size={17} /> 单击课程查看详情，双击可快速加入当前方案</p>
+                <p><Check size={17} /> 自动换课只向更高优先级升级，不会降级</p>
+                <p><Check size={17} /> 自动换课默认关闭，需在完成方案后手动启用</p>
+              </div>
+              <div className="onboardingActions"><Button onClick={finishOnboarding} disabled={busy}><BookOpen />进入课程方案</Button></div>
+            </div>
+          )}
+          <p className="onboardingStatus">{status}</p>
+        </section>
+      </div>
+    );
   }
 
   return (
