@@ -129,6 +129,11 @@ export interface Snapshot {
   generated_at: string;
   metrics: MetricMap;
   settings: SettingsPayload;
+  onboarding: {
+    completed: boolean;
+    has_account: boolean;
+    catalog_ready: boolean;
+  };
   user: UserInfo;
   groups: PriorityGroup[];
   courses: CourseRow[];
@@ -169,6 +174,10 @@ export function saveGroups(groups: PriorityGroup[]): Promise<SaveGroupsResult> {
     ),
   };
   return desktopInvoke("save_groups", { input: { payload } });
+}
+
+export function completeOnboarding(): Promise<{ ok: boolean }> {
+  return desktopInvoke("complete_onboarding");
 }
 
 export function setAutoSwap(enabled: boolean, dryRun: boolean): Promise<{ ok: boolean }> {

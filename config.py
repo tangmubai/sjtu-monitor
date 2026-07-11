@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parent
 # 运行期可写数据目录:源码运行/测试时 == ROOT(行为不变);打包成独立程序后
 # 指向用户级目录(见 apppaths.py),避免装到 Program Files 下写不进状态文件。
 DATA_DIR = apppaths.data_dir()
+apppaths.prepare_release_data(DATA_DIR)
 load_dotenv(DATA_DIR / ".env")
 
 JACCOUNT_USER = os.getenv("JACCOUNT_USER", "")
@@ -76,61 +77,18 @@ _PE_COMMON = {
     "bklx_id": "84A6A72B2E885480E0530200A8C00319",
 }
 
-# 每门要监控的课的查询模板(内置默认)。endpoint=display/pe 决定走哪个接口、怎么解析响应。
-# 可在 user_settings.json 的 courses 分区整体覆盖(格式相同),换用户/换学期无需改代码。
-_DEFAULT_KCH_QUERIES = {
-    "PHY1262":  {"endpoint": "display", "kch_id": "36E21CBEA9CF4F0DE065F8163EE1DCCC",
-                 "jxb_id": "506FCEEDEC9878EFE065F8163EE1DCCC"},
-    "MATH1206": {"endpoint": "display", "kch_id": "MA1206",
-                 "jxb_id": "5081099FD76E19BDE065F8163EE1DCCC"},
-    "CS0501":   {"endpoint": "display", "kch_id": "CS0501",
-                 "jxb_id": "509A3E12116A05E1E065F8163EE1DCCC"},
-    "CS0502":   {"endpoint": "display", "kch_id": "AE708F889EEC0D68E055F8163ED16360",
-                 "jxb_id": "509A3E12128805E1E065F8163EE1DCCC"},
-    "PE003C20": {"endpoint": "pe",      "kch_id": "PE003C20"},
-}
+# 监控课查询模板由初始化同步与 GUI 方案生成；发行版不内置用户课程。
+# endpoint=display/pe 决定走哪个接口、怎么解析响应。
+_DEFAULT_KCH_QUERIES: dict[str, dict] = {}
 
 # === 优先级组 ===
 # 每组是一个有序优先级列表:首位 = 最想要;末位 = 当前已选(初始 held)。
 # 监控范围 = 每组中比 held 更高优先级的全部 jxb_id;swap 只升不降。
 # is_pe 控制 select 时是否走体育课的 bklx_id。
 #
-# 代码里的字典是内置初始基线。用户可在 GUI("选课设置" 标签页)里挑选要监控的
-# 教学班并调整优先级,保存后写入 user_settings.json 的 priority_groups 分区。
-_DEFAULT_PRIORITY_GROUPS: dict[str, dict] = {
-    "PHY": {
-        "is_pe": False,
-        "priority": [
-            "506FCEEDEC9878EFE065F8163EE1DCCC",  # PHY1262-01 (最高优先级)
-            "507009BB29018139E065F8163EE1DCCC",  # PHY1262-06
-            "507009BB290B8139E065F8163EE1DCCC",  # PHY1262-07
-            "506F02ACC24350B1E065F8163EE1DCCC",  # PHY1262-03 (当前持有)
-        ],
-    },
-    "CS": {
-        "is_pe": False,
-        "priority": [
-            "509A0CA5A6133983E065F8163EE1DCCC",  # CS0501-06 (最高)
-            "509A3E12128805E1E065F8163EE1DCCC",  # CS0502-03
-            "509A3E12116A05E1E065F8163EE1DCCC",  # CS0501-05 (当前持有)
-        ],
-    },
-    "MATH": {
-        "is_pe": False,
-        "priority": [
-            "50800417E5FC25C1E065F8163EE1DCCC",  # MATH1206-07 (最高)
-            "50805BDD232B2EF6E065F8163EE1DCCC",  # MATH1206-06
-            "5080E28D07CD12CFE065F8163EE1DCCC",  # 当前持有
-        ],
-    },
-    "PE": {
-        "is_pe": True,
-        "priority": [
-            "52B1F0425B7E82C2E065F8163EE1DCCC",  # PE003C20-05 (最高)
-            "5290D7F41D3F5F1AE065F8163EE1DCCC",  # 当前持有
-        ],
-    },
-}
+# 用户在 GUI 中挑选教学班并调整优先级，保存后写入 user_settings.json 的
+# priority_groups 分区；发行版默认不包含任何方案。
+_DEFAULT_PRIORITY_GROUPS: dict[str, dict] = {}
 
 
 # === 用户设置(user_settings.json)===
@@ -151,6 +109,7 @@ _DEFAULT_SETTINGS = {
     "courses": _DEFAULT_KCH_QUERIES,
     "auto_swap": {"enabled": False, "dry_run": False},
     "notifications": {"email_enabled": True},
+    "onboarding": {"completed": False},
     "priority_groups": _DEFAULT_PRIORITY_GROUPS,
 }
 
@@ -196,7 +155,7 @@ def load_user_settings() -> dict:
         except Exception:
             pass
     # 小字典分区:逐键合并,允许只覆盖个别键
-    for key in ("term", "query_overrides", "auto_swap", "notifications"):
+    for key in ("term", "query_overrides", "auto_swap", "notifications", "onboarding"):
         if isinstance(data.get(key), dict):
             settings[key] = _deep_merge(settings[key], data[key])
     # 整体替换分区:用户删掉的课/组不应被默认值"复活"。

@@ -30,6 +30,7 @@ class GuiBackendSnapshotTests(unittest.TestCase):
         self.assertIn("metrics", encoded)
         self.assertIn("courses", snapshot)
         self.assertIn("groups", snapshot)
+        self.assertIn("onboarding", snapshot)
 
     def test_snapshot_does_not_mutate_runtime_files(self):
         before = {str(path): file_hash(path) for path in RUNTIME_FILES}

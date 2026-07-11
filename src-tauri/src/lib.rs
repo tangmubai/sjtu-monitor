@@ -166,6 +166,52 @@ fn release_mode() -> bool {
     !cfg!(debug_assertions) || env::var("SJTU_MONITOR_RELEASE").ok().as_deref() == Some("1")
 }
 
+fn decode_utf8(bytes: Vec<u8>, context: &str) -> Result<String, String> {
+    String::from_utf8(bytes)
+        .map_err(|err| format!("{context} produced non-UTF-8 output: {err}"))
+}
+
+fn forward_process_stream<R>(stream: R, app: AppHandle, label: String)
+where
+    R: std::io::Read + Send + 'static,
+{
+    thread::spawn(move || {
+        let mut reader = BufReader::new(stream);
+        let mut bytes = Vec::new();
+        loop {
+            bytes.clear();
+            match reader.read_until(b'\n', &mut bytes) {
+                Ok(0) => break,
+                Ok(_) => {
+                    while matches!(bytes.last(), Some(b'\n' | b'\r')) {
+                        bytes.pop();
+                    }
+                    let line = decode_utf8(bytes.clone(), "backend stream").unwrap_or_else(|err| {
+                        format!("[编码错误] {err}")
+                    });
+                    let _ = app.emit(
+                        "process-output",
+                        ProcessEvent {
+                            label: label.clone(),
+                            line,
+                        },
+                    );
+                }
+                Err(err) => {
+                    let _ = app.emit(
+                        "process-output",
+                        ProcessEvent {
+                            label: label.clone(),
+                            line: format!("[输出读取失败] {err}"),
+                        },
+                    );
+                    break;
+                }
+            }
+        }
+    });
+}
+
 fn run_backend(app: &AppHandle, command: &str, payload: Option<Value>) -> Result<Value, String> {
     let backend = resolve_backend(app)?;
     let mut args = backend.base_args("gui_backend.py");
@@ -174,7 +220,7 @@ fn run_backend(app: &AppHandle, command: &str, payload: Option<Value>) -> Result
         .args(args)
         .current_dir(&backend.data_dir)
         .env("PYTHONUTF8", "1")
-        .env("PYTHONIOENCODING", "utf-8")
+        .env("PYTHONIOENCODING", "utf-8:strict")
         .env("PYTHONUNBUFFERED", "1")
         .env("SJTU_MONITOR_DATA_DIR", &backend.data_dir)
         .env("SJTU_MONITOR_RELEASE", if release_mode() { "1" } else { "0" })
@@ -201,9 +247,9 @@ fn run_backend(app: &AppHandle, command: &str, payload: Option<Value>) -> Result
     let output = child
         .wait_with_output()
         .map_err(|err| format!("failed to read backend output: {err}"))?;
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stdout = decode_utf8(output.stdout, "backend stdout")?.trim().to_string();
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = decode_utf8(output.stderr, "backend stderr")?;
         if !stdout.is_empty() {
             if let Ok(value) = serde_json::from_str::<Value>(&stdout) {
                 return Err(value["error"].as_str().unwrap_or(&stdout).to_string());
@@ -227,6 +273,11 @@ fn save_settings(app: AppHandle, input: JsonPayload) -> Result<Value, String> {
 #[tauri::command]
 fn save_groups(app: AppHandle, input: JsonPayload) -> Result<Value, String> {
     run_backend(&app, "save-groups", Some(input.payload))
+}
+
+#[tauri::command]
+fn complete_onboarding(app: AppHandle) -> Result<Value, String> {
+    run_backend(&app, "complete-onboarding", None)
 }
 
 #[tauri::command]
@@ -267,7 +318,7 @@ fn start_process(
         .args(args)
         .current_dir(&backend.data_dir)
         .env("PYTHONUTF8", "1")
-        .env("PYTHONIOENCODING", "utf-8")
+        .env("PYTHONIOENCODING", "utf-8:strict")
         .env("PYTHONUNBUFFERED", "1")
         .env("SJTU_MONITOR_DATA_DIR", &backend.data_dir)
         .env("SJTU_MONITOR_RELEASE", if release_mode() { "1" } else { "0" })
@@ -279,37 +330,11 @@ fn start_process(
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     let label = input.label.clone();
-    let app_for_stdout = app.clone();
     if let Some(stream) = stdout {
-        let label_for_thread = label.clone();
-        thread::spawn(move || {
-            let reader = BufReader::new(stream);
-            for line in reader.lines().map_while(Result::ok) {
-                let _ = app_for_stdout.emit(
-                    "process-output",
-                    ProcessEvent {
-                        label: label_for_thread.clone(),
-                        line,
-                    },
-                );
-            }
-        });
+        forward_process_stream(stream, app.clone(), label.clone());
     }
-    let app_for_stderr = app.clone();
     if let Some(stream) = stderr {
-        let label_for_thread = label.clone();
-        thread::spawn(move || {
-            let reader = BufReader::new(stream);
-            for line in reader.lines().map_while(Result::ok) {
-                let _ = app_for_stderr.emit(
-                    "process-output",
-                    ProcessEvent {
-                        label: label_for_thread.clone(),
-                        line,
-                    },
-                );
-            }
-        });
+        forward_process_stream(stream, app.clone(), label.clone());
     }
     children.insert(label, child);
     Ok(())
@@ -369,6 +394,7 @@ pub fn run() {
             load_snapshot,
             save_settings,
             save_groups,
+            complete_onboarding,
             set_auto_swap,
             start_process,
             stop_process,
@@ -376,4 +402,20 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::decode_utf8;
+
+    #[test]
+    fn decodes_chinese_backend_output_as_utf8() {
+        let text = decode_utf8("中文编码验证：交我选".as_bytes().to_vec(), "test").unwrap();
+        assert_eq!(text, "中文编码验证：交我选");
+    }
+
+    #[test]
+    fn rejects_non_utf8_backend_output() {
+        assert!(decode_utf8(vec![0xd6, 0xd0, 0xce, 0xc4], "test").is_err());
+    }
 }

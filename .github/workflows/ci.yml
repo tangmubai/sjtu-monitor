@@ -83,3 +83,6 @@ jobs:
 
       - name: Cargo check
         run: cargo check --manifest-path src-tauri/Cargo.toml --locked
+
+      - name: Cargo tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked

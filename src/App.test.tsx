@@ -1,7 +1,7 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Snapshot } from "./api";
+import { completeOnboarding, saveSettings, startProcess, type Snapshot } from "./api";
 import App from "./App";
 
 const tauriWindowMock = vi.hoisted(() => ({
@@ -32,6 +32,11 @@ const snapshot: Snapshot = {
     smtp_pass: "",
     mail_from: "",
     mail_to: "",
+  },
+  onboarding: {
+    completed: true,
+    has_account: false,
+    catalog_ready: false,
   },
   user: {
     name: "测试用户",
@@ -136,13 +141,48 @@ vi.mock("./api", async (importOriginal) => {
     pollProcesses: vi.fn(async () => []),
     saveGroups: vi.fn(async () => ({ ok: true, warnings: [], duplicates: {}, unresolved: [], course_count: 1 })),
     saveSettings: vi.fn(async () => ({ ok: true })),
+    completeOnboarding: vi.fn(async () => ({ ok: true })),
     setAutoSwap: vi.fn(async () => ({ ok: true })),
     startProcess: vi.fn(async () => undefined),
     stopProcess: vi.fn(async () => undefined),
   };
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  snapshot.onboarding = { completed: true, has_account: false, catalog_ready: false };
+  vi.clearAllMocks();
+});
+
+describe("first-run onboarding", () => {
+  it("saves credentials before an explicit course-sync action", async () => {
+    snapshot.onboarding = { completed: false, has_account: false, catalog_ready: false };
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "连接 JAccount" });
+    expect(startProcess).not.toHaveBeenCalled();
+    await user.type(screen.getByLabelText("JAccount"), "student");
+    await user.type(screen.getByLabelText("JAccount 密码"), "secret");
+    await user.click(screen.getByRole("button", { name: "保存并继续" }));
+
+    await waitFor(() => expect(saveSettings).toHaveBeenCalled());
+    expect(await screen.findByRole("heading", { name: "同步课程目录" })).toBeInTheDocument();
+    expect(startProcess).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "开始同步课程" }));
+    expect(startProcess).toHaveBeenCalledWith("bootstrap", "bootstrap.py", [], false);
+  });
+
+  it("finishes setup only after a catalog is available", async () => {
+    snapshot.onboarding = { completed: false, has_account: true, catalog_ready: true };
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "创建自己的选课方案" });
+    await user.click(screen.getByRole("button", { name: "进入课程方案" }));
+    await waitFor(() => expect(completeOnboarding).toHaveBeenCalled());
+  });
+});
 
 describe("course workspace", () => {
   it("keeps command output off the overview and in logs", async () => {
