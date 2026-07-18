@@ -1,5 +1,6 @@
 .env
 secrets.local.json
+*.pfx
 state.json
 swap_state.json
 priority_groups.json

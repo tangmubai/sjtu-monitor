@@ -73,6 +73,10 @@ jobs:
             if ($rc) { "RC=$($rc.FullName)" >> $env:GITHUB_ENV }
           }
 
+      - name: Verify release version alignment
+        shell: pwsh
+        run: pwsh -File scripts/check-release-version.ps1
+
       # --config 合入 tauri.bundle.conf.json,仅在打包时加入 sidecar 资源;
       # 基础 tauri.conf.json 不含 resources,保证 dev(python gui.py)与 ci 的 cargo check
       # 在未构建 sidecar 时也不会因 glob 匹配不到而失败。tagName 为空时只构建、不建 Release。
@@ -86,6 +90,33 @@ jobs:
           releaseDraft: true
           includeUpdaterJson: false
 
+      - name: Package Microsoft Store MSIX
+        shell: pwsh
+        env:
+          MSIX_CERTIFICATE_BASE64: ${{ secrets.MSIX_CERTIFICATE_BASE64 }}
+          MSIX_CERTIFICATE_PASSWORD: ${{ secrets.MSIX_CERTIFICATE_PASSWORD }}
+          IS_TAG_RELEASE: ${{ startsWith(github.ref, 'refs/tags/') }}
+        run: |
+          if (-not $env:MSIX_CERTIFICATE_BASE64 -or -not $env:MSIX_CERTIFICATE_PASSWORD) {
+            if ($env:IS_TAG_RELEASE -eq 'true') {
+              throw "标签发布缺少 MSIX_CERTIFICATE_BASE64 或 MSIX_CERTIFICATE_PASSWORD。请按 docs/microsoft-store.md 配置与 Partner Center Publisher 匹配的 PFX。"
+            }
+            $version = (Get-Content package.json -Raw | ConvertFrom-Json).version + '.0'
+            pwsh -File packaging/build-msix.ps1 -Version $version -SkipSign
+            exit $LASTEXITCODE
+          }
+          $certificatePath = Join-Path $env:RUNNER_TEMP 'sjtu-monitor-store-signing.pfx'
+          [System.IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:MSIX_CERTIFICATE_BASE64))
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version + '.0'
+          pwsh -File packaging/build-msix.ps1 -Version $version -CertificatePath $certificatePath -CertificatePassword $env:MSIX_CERTIFICATE_PASSWORD
+
+      - name: Upload MSIX to draft GitHub Release
+        if: ${{ startsWith(github.ref, 'refs/tags/') }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload ${{ github.ref_name }} src-tauri/target/release/bundle/msix/*.msix --clobber
+
       - name: Upload installers (manual run)
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         uses: actions/upload-artifact@v4
@@ -94,3 +125,4 @@ jobs:
           path: |
             src-tauri/target/release/bundle/msi/*.msi
             src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/msix/*.msix

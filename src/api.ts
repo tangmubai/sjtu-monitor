@@ -38,6 +38,7 @@ export interface SettingsPayload {
   smtp_user: string;
   smtp_pass: string;
   has_smtp_pass?: boolean;
+  smtp_pass_fallback?: boolean;
   secret_backend?: string;
   mail_from: string;
   mail_to: string;
@@ -178,6 +179,10 @@ export function saveGroups(groups: PriorityGroup[]): Promise<SaveGroupsResult> {
 
 export function completeOnboarding(): Promise<{ ok: boolean }> {
   return desktopInvoke("complete_onboarding");
+}
+
+export function testEmail(): Promise<{ ok: boolean; mail_to?: string }> {
+  return desktopInvoke("test_email");
 }
 
 export function setAutoSwap(enabled: boolean, dryRun: boolean): Promise<{ ok: boolean }> {

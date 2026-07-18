@@ -457,6 +457,7 @@ def build_snapshot() -> dict[str, Any]:
             "smtp_user": config.SMTP_USER,
             "smtp_pass": "",
             "has_smtp_pass": bool(config.SMTP_PASS),
+            "smtp_pass_fallback": bool(getattr(config, "SMTP_PASS_IS_FALLBACK", False)),
             "secret_backend": secure_store.backend_name(),
             "mail_from": config.MAIL_FROM,
             "mail_to": config.MAIL_TO,
@@ -612,6 +613,14 @@ def set_auto_swap(payload: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True}
 
 
+def test_email() -> dict[str, Any]:
+    """发送测试邮件(用户显式触发,需要联网访问 SMTP 服务器)。"""
+    import notifier
+
+    mail_to = notifier.send_test()
+    return {"ok": True, "mail_to": mail_to}
+
+
 def complete_onboarding() -> dict[str, Any]:
     if not config.JACCOUNT_USER or not config.JACCOUNT_PASS:
         raise ValueError("请先保存 JAccount 账号和密码")
@@ -644,6 +653,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("save-groups")
     sub.add_parser("set-auto-swap")
     sub.add_parser("complete-onboarding")
+    sub.add_parser("test-email")
     args = parser.parse_args(argv)
     try:
         if args.cmd == "snapshot":
@@ -656,6 +666,8 @@ def main(argv: list[str] | None = None) -> int:
             emit(set_auto_swap(read_payload()))
         elif args.cmd == "complete-onboarding":
             emit(complete_onboarding())
+        elif args.cmd == "test-email":
+            emit(test_email())
         return 0
     except Exception as exc:
         emit({"ok": False, "error": str(exc)})
