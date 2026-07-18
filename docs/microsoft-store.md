@@ -36,7 +36,7 @@
 
 ```powershell
 pwsh -File scripts/check-release-version.ps1
-pwsh -File packaging/build-msix.ps1 -Version 0.4.0.0 -CertificatePath .\store-signing.pfx -CertificatePassword '<password>'
+pwsh -File packaging/build-msix.ps1 -Version 0.5.0.0 -CertificatePath .\store-signing.pfx -CertificatePassword '<password>'
 ```
 
 只检查 MSIX 结构、尚未取得证书时，可临时追加 `-SkipSign`；该产物不能用于安装、认证或提交。GitHub 的手动工作流会生成这种结构检查包；标签发布则会强制要求签名。
