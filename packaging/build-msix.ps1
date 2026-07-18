@@ -70,6 +70,20 @@ try {
   foreach ($icon in @("StoreLogo.png", "Square44x44Logo.png", "Square150x150Logo.png", "Square310x310Logo.png")) {
     Copy-Item -LiteralPath (Join-Path $iconRoot $icon) -Destination $assets
   }
+  Add-Type -AssemblyName System.Drawing
+  $squareLogo = [System.Drawing.Image]::FromFile((Join-Path $assets "Square310x310Logo.png"))
+  $wideLogo = [System.Drawing.Bitmap]::new(310, 150)
+  $graphics = [System.Drawing.Graphics]::FromImage($wideLogo)
+  try {
+    $graphics.Clear([System.Drawing.Color]::FromArgb(7, 89, 133))
+    $graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+    $graphics.DrawImage($squareLogo, [System.Drawing.Rectangle]::new(80, 0, 150, 150))
+    $wideLogo.Save((Join-Path $assets "Wide310x150Logo.png"), [System.Drawing.Imaging.ImageFormat]::Png)
+  } finally {
+    $graphics.Dispose()
+    $wideLogo.Dispose()
+    $squareLogo.Dispose()
+  }
 
   $manifest = (Get-Content -LiteralPath $template -Raw).
     Replace("__MSIX_VERSION__", $Version).

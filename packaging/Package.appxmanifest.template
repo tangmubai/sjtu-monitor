@@ -36,7 +36,8 @@
         Square44x44Logo="Assets\Square44x44Logo.png">
         <uap:DefaultTile
           ShortName="交我选"
-          Square310x310Logo="Assets\Square310x310Logo.png" />
+          Square310x310Logo="Assets\Square310x310Logo.png"
+          Wide310x150Logo="Assets\Wide310x150Logo.png" />
       </uap:VisualElements>
     </Application>
   </Applications>
