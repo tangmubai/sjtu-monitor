@@ -21,12 +21,20 @@ JACCOUNT_PASS = os.getenv("JACCOUNT_PASS") or secure_store.get_secret("JACCOUNT_
 COURSE_PLUS_EMAIL = os.getenv("COURSE_PLUS_EMAIL", "")
 COURSE_PLUS_PASSWORD = os.getenv("COURSE_PLUS_PASSWORD") or secure_store.get_secret("COURSE_PLUS_PASSWORD")
 
-SMTP_HOST = os.getenv("SMTP_HOST", "")
-SMTP_PORT = int(os.getenv("SMTP_PORT", "465"))
-SMTP_USER = os.getenv("SMTP_USER", "")
-SMTP_PASS = os.getenv("SMTP_PASS") or secure_store.get_secret("SMTP_PASS")
-MAIL_FROM = os.getenv("MAIL_FROM", SMTP_USER)
-MAIL_TO = os.getenv("MAIL_TO", SMTP_USER)
+# 邮件默认走交大邮箱(mail.sjtu.edu.cn:465 隐式SSL,与 notifier 的 SMTP_SSL 匹配):
+# SMTP 账号默认为 jAccount@sjtu.edu.cn,密码默认复用 JAccount 密码(同一凭据体系);
+# 显式配置对应项即可覆盖为其他邮箱服务。
+_SJTU_MAIL = (
+    JACCOUNT_USER if "@" in JACCOUNT_USER else f"{JACCOUNT_USER}@sjtu.edu.cn"
+) if JACCOUNT_USER else ""
+SMTP_HOST = os.getenv("SMTP_HOST") or "mail.sjtu.edu.cn"
+SMTP_PORT = int(os.getenv("SMTP_PORT") or "465")
+SMTP_USER = os.getenv("SMTP_USER") or _SJTU_MAIL
+_SMTP_PASS_EXPLICIT = os.getenv("SMTP_PASS") or secure_store.get_secret("SMTP_PASS")
+SMTP_PASS = _SMTP_PASS_EXPLICIT or JACCOUNT_PASS
+SMTP_PASS_IS_FALLBACK = bool(SMTP_PASS) and not _SMTP_PASS_EXPLICIT
+MAIL_FROM = os.getenv("MAIL_FROM") or SMTP_USER
+MAIL_TO = os.getenv("MAIL_TO") or SMTP_USER
 
 POLL_MIN = int(os.getenv("POLL_MIN", "60"))
 POLL_MAX = int(os.getenv("POLL_MAX", "120"))

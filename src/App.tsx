@@ -8,6 +8,7 @@ import {
   Download,
   Eye,
   Gauge,
+  Mail,
   Moon,
   Pause,
   Play,
@@ -75,11 +76,14 @@ import {
   setAutoSwap,
   startProcess,
   stopProcess,
+  testEmail,
 } from "./api";
 import {
   conflictWarning,
   CourseSort,
   formatRatingScore,
+  LogLevel,
+  parseLogLine,
   sortCourses,
 } from "./courseLogic";
 
@@ -187,6 +191,20 @@ function Badge({ tone, children }: { tone: string; children: React.ReactNode }) 
   return <UiBadge variant={variant}>{children}</UiBadge>;
 }
 
+function BrandMark() {
+  return (
+    <span className="brandMark" role="img" aria-label="交我选">
+      <svg viewBox="0 0 48 48" aria-hidden="true">
+        <path className="brandMark-card" d="M10 12.5A4.5 4.5 0 0 1 14.5 8h19A4.5 4.5 0 0 1 38 12.5v21a4.5 4.5 0 0 1-4.5 4.5h-19A4.5 4.5 0 0 1 10 33.5v-21Z" />
+        <path className="brandMark-title" d="M16 15h10" />
+        <path className="brandMark-line" d="M16 20h7M16 31h7" />
+        <path className="brandMark-pulse" d="M26 27h3l2-5 3 10 2-5h3" />
+        <circle className="brandMark-dot" cx="37" cy="11" r="4" />
+      </svg>
+    </span>
+  );
+}
+
 function App() {
   const [page, setPage] = useState<Page>("overview");
   const [themePreference, setThemePreference] = useState<ThemePreference>(readThemePreference);
@@ -206,6 +224,7 @@ function App() {
   const [onlyOpen, setOnlyOpen] = useState(false);
   const [onlyUnassigned, setOnlyUnassigned] = useState(false);
   const [logQuery, setLogQuery] = useState("");
+  const [logLevel, setLogLevel] = useState<"all" | LogLevel>("all");
   const [stateFilter, setStateFilter] = useState<"watched" | "open" | "all">("watched");
   const [runtimeLines, setRuntimeLines] = useState<RuntimeLine[]>([]);
   const [running, setRunning] = useState<Set<string>>(new Set());
@@ -374,14 +393,28 @@ function App() {
     return sortCourses(matches, courseSort);
   }, [snapshot, courseQuery, category, onlyOpen, onlyUnassigned, courseSort]);
 
-  const visibleLogs = useMemo(() => {
-    const persisted = snapshot?.logs.map((line) => ({ source: "changes", text: line, time: "" })) || [];
-    const lines = [...persisted, ...runtimeLines];
+  const parsedLogs = useMemo(() => {
+    const persisted = (snapshot?.logs || []).map((line) =>
+      parseLogLine("changes", line.replace(/^\[changes\]\s*/, "")),
+    );
+    const runtime = runtimeLines.map((line) => parseLogLine(line.source, line.text, line.time));
+    const lines = [...persisted, ...runtime];
     const query = logQuery.trim().toLowerCase();
     return query
-      ? lines.filter((line) => `${line.source} ${line.text}`.toLowerCase().includes(query))
+      ? lines.filter((line) => `${line.source} ${line.message}`.toLowerCase().includes(query))
       : lines;
   }, [snapshot, runtimeLines, logQuery]);
+
+  const logCounts = useMemo(() => {
+    const counts: Record<"all" | LogLevel, number> = { all: parsedLogs.length, info: 0, warn: 0, error: 0, debug: 0 };
+    for (const line of parsedLogs) counts[line.level] += 1;
+    return counts;
+  }, [parsedLogs]);
+
+  const visibleLogs = useMemo(
+    () => (logLevel === "all" ? parsedLogs : parsedLogs.filter((line) => line.level === logLevel)),
+    [parsedLogs, logLevel],
+  );
 
   const stateRows = useMemo(() => {
     const rows = snapshot?.state_rows || [];
@@ -498,6 +531,21 @@ function App() {
     }
   }
 
+  async function sendTestEmail() {
+    setBusy(true);
+    setStatus("正在保存设置并发送测试邮件...");
+    try {
+      await saveSettings(settings);
+      const result = await testEmail();
+      await refresh();
+      setStatus(`测试邮件已发送至 ${result.mail_to || "收件人"}，请查收`);
+    } catch (error) {
+      setStatus(`测试邮件发送失败: ${String(error)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function saveOnboardingAccount() {
     if (!settings.jaccount_user.trim()) {
       setStatus("请输入 JAccount 账号");
@@ -560,7 +608,7 @@ function App() {
       <div className={`onboardingShell theme-${theme}`}>
         <section className="onboardingCard">
           <div className="onboardingBrand">
-            <span className="brandMark">交</span>
+            <BrandMark />
             <div><strong>欢迎使用交我选</strong><p>完成基础设置后再创建自己的监控方案</p></div>
           </div>
           <div className="onboardingSteps" aria-label="初始化进度">
@@ -618,7 +666,7 @@ function App() {
     <div className={`app theme-${theme}`}>
       <aside className="sidebar">
         <div className="brand">
-          <span className="brandMark">交</span>
+          <BrandMark />
           <div>
             <strong>交我选</strong>
             <small>SJTU Monitor</small>
@@ -1010,18 +1058,46 @@ function App() {
             )}
 
             {page === "logs" && (
-              <section className="panel">
+              <section className="panel logsPanel">
                 <div className="panelHeader">
                   <h2>合并日志</h2>
-                  <label className="searchBox narrow">
-                    <Search size={16} />
-                    <input value={logQuery} onChange={(event) => setLogQuery(event.target.value)} placeholder="筛选日志" />
-                  </label>
+                  <div className="logToolbar">
+                    <div className="logLevelTabs" role="tablist" aria-label="日志级别筛选">
+                      {([
+                        { id: "all", label: "全部" },
+                        { id: "info", label: "信息" },
+                        { id: "warn", label: "警告" },
+                        { id: "error", label: "错误" },
+                        { id: "debug", label: "调试" },
+                      ] as const).map((item) => (
+                        <button
+                          key={item.id}
+                          role="tab"
+                          aria-selected={logLevel === item.id}
+                          className={`${item.id} ${logLevel === item.id ? "active" : ""}`}
+                          onClick={() => setLogLevel(item.id)}
+                        >
+                          {item.label}
+                          <small>{logCounts[item.id]}</small>
+                        </button>
+                      ))}
+                    </div>
+                    <label className="searchBox narrow">
+                      <Search size={16} />
+                      <input value={logQuery} onChange={(event) => setLogQuery(event.target.value)} placeholder="筛选日志" />
+                    </label>
+                  </div>
                 </div>
-                <div className="console">
+                <div className="logList">
                   {visibleLogs.slice(-350).map((line, index) => (
-                    <p key={`${line.time}-${index}`}>[{line.source}] {line.time} {line.text}</p>
+                    <div className="logLine" key={`${line.time}-${index}`}>
+                      <span className="logTime">{line.time || "--:--:--"}</span>
+                      <span className={`logBadge ${line.level}`}>{line.level.toUpperCase()}</span>
+                      <span className="logSource">{line.source}</span>
+                      <span className="logMsg">{line.message}</span>
+                    </div>
                   ))}
+                  {visibleLogs.length === 0 && <div className="listEmpty">暂无符合条件的日志</div>}
                 </div>
               </section>
             )}
@@ -1071,13 +1147,21 @@ function App() {
                     <Field label="SMTP Host" value={settings.smtp_host} onChange={(value) => setSettings({ ...settings, smtp_host: value })} />
                     <Field label="SMTP Port" type="number" value={String(settings.smtp_port)} onChange={(value) => setSettings({ ...settings, smtp_port: Number(value) })} />
                     <Field label="SMTP User" value={settings.smtp_user} onChange={(value) => setSettings({ ...settings, smtp_user: value })} />
-                    <Field label="SMTP Pass" type="password" value={settings.smtp_pass} placeholder={settings.has_smtp_pass ? "已安全保存，留空不修改" : "未保存"} onChange={(value) => setSettings({ ...settings, smtp_pass: value })} />
+                    <Field label="SMTP Pass" type="password" value={settings.smtp_pass} placeholder={settings.has_smtp_pass ? (settings.smtp_pass_fallback ? "默认复用 JAccount 密码，可单独设置" : "已安全保存，留空不修改") : "未保存"} onChange={(value) => setSettings({ ...settings, smtp_pass: value })} />
                     <Field label="发件人" value={settings.mail_from} onChange={(value) => setSettings({ ...settings, mail_from: value })} />
                     <Field label="收件人" value={settings.mail_to} onChange={(value) => setSettings({ ...settings, mail_to: value })} />
                   </div>
+                  <p className="settingsHint">默认使用交大邮箱 mail.sjtu.edu.cn:465(SSL)，账号为 jAccount@sjtu.edu.cn，密码复用 JAccount 密码；改用其他邮箱时覆盖对应字段即可。</p>
                   <div className="settingsActions">
-                    <button className="primary" onClick={persistSettings}><Save size={16} /> 保存用户设置</button>
+                    <button onClick={sendTestEmail} disabled={busy}><Mail size={16} /> 保存并发送测试邮件</button>
                   </div>
+                </section>
+                <section className="panel settingsSavePanel">
+                  <div>
+                    <strong>保存全局设置</strong>
+                    <p>账号、轮询与邮件配置将一并保存；外观选择即时生效，正在运行的监控需重启后使用新参数。</p>
+                  </div>
+                  <button className="primary" onClick={persistSettings} disabled={busy}><Save size={16} /> 保存全部设置</button>
                 </section>
               </section>
             )}

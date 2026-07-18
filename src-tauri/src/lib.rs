@@ -140,14 +140,18 @@ fn resolve_backend(app: &AppHandle) -> Result<Backend, String> {
         .map_err(|err| format!("cannot resolve app data dir: {err}"))?;
     let _ = std::fs::create_dir_all(&data_dir);
 
-    if let Some(sidecar) = locate_sidecar(app) {
-        return Ok(Backend {
-            program: sidecar.to_string_lossy().to_string(),
-            prefix: Vec::new(),
-            bundled: true,
-            root: data_dir.clone(),
-            data_dir,
-        });
+    // 仅发行模式使用打包 sidecar;开发模式下 target/debug 里可能残留旧构建产物,
+    // 必须走 SJTU_MONITOR_PYTHON 指定的源码后端(需要验证 sidecar 时可设 SJTU_MONITOR_RELEASE=1)。
+    if release_mode() {
+        if let Some(sidecar) = locate_sidecar(app) {
+            return Ok(Backend {
+                program: sidecar.to_string_lossy().to_string(),
+                prefix: Vec::new(),
+                bundled: true,
+                root: data_dir.clone(),
+                data_dir,
+            });
+        }
     }
 
     // 开发/源码模式:仓库内有 gui_backend.py,用 python 直接跑;数据仍写仓库根(行为不变)。
@@ -281,6 +285,11 @@ fn complete_onboarding(app: AppHandle) -> Result<Value, String> {
 }
 
 #[tauri::command]
+fn test_email(app: AppHandle) -> Result<Value, String> {
+    run_backend(&app, "test-email", None)
+}
+
+#[tauri::command]
 fn set_auto_swap(app: AppHandle, input: AutoSwapPayload) -> Result<Value, String> {
     let dry_run = if release_mode() { false } else { input.dry_run };
     run_backend(
@@ -396,6 +405,7 @@ pub fn run() {
             save_groups,
             complete_onboarding,
             set_auto_swap,
+            test_email,
             start_process,
             stop_process,
             poll_processes

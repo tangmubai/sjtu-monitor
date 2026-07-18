@@ -3,6 +3,7 @@ import type { CourseRow, PriorityGroup } from "./api";
 import {
   conflictWarning,
   formatRatingScore,
+  parseLogLine,
   scheduleConflict,
   sortCourses,
 } from "./courseLogic";
@@ -88,5 +89,49 @@ describe("PySide-compatible schedule conflict checks", () => {
     const warning = conflictWarning(["new"], "当前组", groups, courses);
     expect(warning).toContain("确定存在时间冲突");
     expect(warning).toContain("无法判断是否冲突");
+  });
+});
+
+describe("parseLogLine", () => {
+  it("parses python logging lines with level and logger name", () => {
+    const line = parseLogLine("monitor", "2026-07-18 14:02:11,123 WARNING [monitor] 查询失败，将重试");
+    expect(line.time).toBe("14:02:11");
+    expect(line.level).toBe("warn");
+    expect(line.source).toBe("monitor");
+    expect(line.message).toBe("查询失败，将重试");
+  });
+
+  it("formats change records and maps swap failures to error", () => {
+    const record = JSON.stringify({
+      kind: "swap_result", ok: false, status: "FULL", kcmc: "大学物理", jxbmc: "PHY1262-03",
+    });
+    const line = parseLogLine("changes", `2026-07-18T09:00:00 ${record}`);
+    expect(line.level).toBe("error");
+    expect(line.message).toContain("换课失败");
+    expect(line.message).toContain("PHY1262-03 大学物理");
+  });
+
+  it("maps spot_open records to warn with readable text", () => {
+    const record = JSON.stringify({ kind: "spot_open", kcmc: "线性代数", jxbmc: "MA0301-01", msg: "剩余1" });
+    const line = parseLogLine("changes", `2026-07-18T09:00:00 ${record}`);
+    expect(line.level).toBe("warn");
+    expect(line.message).toContain("有空位");
+  });
+
+  it("formats field-change records with chinese labels", () => {
+    const record = JSON.stringify({ kind: "changed", kcmc: "高数", jxbmc: "MA01", changes: { yxzrs: [28, 29] } });
+    const line = parseLogLine("changes", `2026-07-18T09:00:00 ${record}`);
+    expect(line.level).toBe("info");
+    expect(line.message).toContain("已选 28→29");
+  });
+
+  it("classifies runtime heuristics: command echo, exit codes, plain text", () => {
+    expect(parseLogLine("monitor", "$ python monitor.py --once", "12:00:00").level).toBe("debug");
+    expect(parseLogLine("monitor", "exit=0").level).toBe("info");
+    expect(parseLogLine("monitor", "exit=1").level).toBe("error");
+    expect(parseLogLine("monitor", "exit=-").level).toBe("warn");
+    const plain = parseLogLine("bootstrap", "已保存 catalog.json", "12:00:01");
+    expect(plain.level).toBe("info");
+    expect(plain.time).toBe("12:00:01");
   });
 });

@@ -129,6 +129,24 @@ def _linux_notification(title: str, body: str) -> None:
         log.warning("Linux 通知失败: %s", e)
 
 
+def _send_email(subject: str, body_lines: Sequence[str], heading: str = "选课信息变更") -> None:
+    """构造并通过 SMTP_SSL 发送 HTML 邮件;配置不全或发送失败时抛异常。"""
+    if not (config.SMTP_HOST and config.SMTP_USER and config.SMTP_PASS):
+        raise RuntimeError("SMTP 未配置(需要服务器、用户名和密码)")
+    body = (
+        f"<html><body><h3>{html.escape(heading)}</h3><ul>"
+        + "".join(f"<li>{line}</li>" for line in body_lines)
+        + "</ul></body></html>"
+    )
+    msg = MIMEText(body, "html", "utf-8")
+    msg["Subject"] = subject
+    msg["From"] = formataddr(("SJTU 选课监控", config.MAIL_FROM))
+    msg["To"] = config.MAIL_TO
+    with smtplib.SMTP_SSL(config.SMTP_HOST, config.SMTP_PORT, timeout=20) as s:
+        s.login(config.SMTP_USER, config.SMTP_PASS)
+        s.sendmail(config.MAIL_FROM, [config.MAIL_TO], msg.as_string())
+
+
 def _email(subject: str, body_lines: Sequence[str]) -> None:
     if not config.EMAIL_ENABLED:
         log.info("邮件通知已关闭")
@@ -136,22 +154,28 @@ def _email(subject: str, body_lines: Sequence[str]) -> None:
     if not (config.SMTP_HOST and config.SMTP_USER and config.SMTP_PASS):
         log.info("SMTP 未配置,跳过邮件")
         return
-    html = (
-        "<html><body><h3>选课信息变更</h3><ul>"
-        + "".join(f"<li>{line}</li>" for line in body_lines)
-        + "</ul></body></html>"
-    )
-    msg = MIMEText(html, "html", "utf-8")
-    msg["Subject"] = subject
-    msg["From"] = formataddr(("SJTU 选课监控", config.MAIL_FROM))
-    msg["To"] = config.MAIL_TO
     try:
-        with smtplib.SMTP_SSL(config.SMTP_HOST, config.SMTP_PORT, timeout=20) as s:
-            s.login(config.SMTP_USER, config.SMTP_PASS)
-            s.sendmail(config.MAIL_FROM, [config.MAIL_TO], msg.as_string())
+        _send_email(subject, body_lines)
         log.info("邮件已发送 -> %s", config.MAIL_TO)
     except Exception as e:
         log.warning("邮件发送失败: %s", e)
+
+
+def send_test() -> str:
+    """发送一封测试邮件验证 SMTP 链路,返回收件地址;失败抛异常(供 GUI 测试按钮调用)。
+
+    与常规通知不同,测试属于用户显式动作,不受 EMAIL_ENABLED 开关限制。
+    """
+    from datetime import datetime
+
+    lines = [
+        "这是一封来自 SJTU 选课监控的测试邮件,收到即说明通知链路正常。",
+        f"SMTP 服务器: {config.SMTP_HOST}:{config.SMTP_PORT} (SSL)",
+        f"发件人: {config.MAIL_FROM}",
+        f"发送时间: {datetime.now().isoformat(timespec='seconds')}",
+    ]
+    _send_email("[测试] SJTU 选课监控通知链路正常", lines, heading="测试邮件")
+    return config.MAIL_TO
 
 
 def send(changes: list[dict]) -> None:

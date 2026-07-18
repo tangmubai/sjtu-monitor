@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="background" x1="68" y1="42" x2="444" y2="470" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0D9488"/>
+      <stop offset="1" stop-color="#075985"/>
+    </linearGradient>
+    <linearGradient id="card" x1="148" y1="116" x2="364" y2="396" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F8FAFC"/>
+      <stop offset="1" stop-color="#DCEAF2"/>
+    </linearGradient>
+  </defs>
+  <!-- Calm, high-contrast course monitor: a course card framed by a live pulse. -->
+  <rect x="28" y="28" width="456" height="456" rx="112" fill="url(#background)"/>
+  <path d="M122 174c0-20 16-36 36-36h196c20 0 36 16 36 36v164c0 20-16 36-36 36H158c-20 0-36-16-36-36V174Z" fill="#063C5C" opacity=".28"/>
+  <path d="M118 166c0-20 16-36 36-36h196c20 0 36 16 36 36v164c0 20-16 36-36 36H154c-20 0-36-16-36-36V166Z" fill="url(#card)"/>
+  <rect x="154" y="174" width="114" height="18" rx="9" fill="#0F766E"/>
+  <rect x="154" y="210" width="82" height="14" rx="7" fill="#94A3B8"/>
+  <rect x="154" y="310" width="86" height="14" rx="7" fill="#94A3B8"/>
+  <rect x="154" y="338" width="56" height="14" rx="7" fill="#CBD5E1"/>
+  <path d="M274 276h26l16-38 26 76 18-38h34" fill="none" stroke="#0F766E" stroke-linecap="round" stroke-linejoin="round" stroke-width="18"/>
+  <circle cx="377" cy="128" r="37" fill="#F97316"/>
+  <circle cx="377" cy="128" r="13" fill="#FFF7ED"/>
+</svg>

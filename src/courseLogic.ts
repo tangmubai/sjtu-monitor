@@ -121,6 +121,110 @@ export function scheduleConflict(
   return { conflict: false };
 }
 
+export type LogLevel = "info" | "warn" | "error" | "debug";
+
+export interface ParsedLogLine {
+  time: string;
+  level: LogLevel;
+  source: string;
+  message: string;
+}
+
+const levelTokens: Record<string, LogLevel> = {
+  DEBUG: "debug",
+  INFO: "info",
+  WARN: "warn",
+  WARNING: "warn",
+  ERROR: "error",
+  CRITICAL: "error",
+};
+
+const changeFieldLabels: Record<string, string> = {
+  yxzrs: "已选",
+  xzzrs: "选中",
+  cxrs: "抽选人数",
+  jxbrs: "班人数",
+  jxbxzrs: "班选中",
+  syddrs: "剩余",
+  jxbrl: "容量",
+  yl: "总容量",
+  krrl: "可容",
+  cxrl: "抽选容量",
+};
+
+function formatChangeRecord(record: Record<string, unknown>): { level: LogLevel; message: string } {
+  const name = String(record.kcmc || "");
+  const jxb = String(record.jxbmc || "");
+  const label = `${jxb} ${name}`.trim();
+  const kind = String(record.kind || "");
+  if (kind === "spot_open") {
+    return { level: "warn", message: `🔥 [有空位] ${label} — ${String(record.msg || "")}` };
+  }
+  if (kind === "swap_result") {
+    if (record.ok) return { level: "info", message: `✅ [换课成功] ${label} 已抢到` };
+    const status = String(record.status || "");
+    if (status === "FATAL_LOST") {
+      return { level: "error", message: `❌ [换课致命错误] ${label} — 旧课退了选不回，需人工处理` };
+    }
+    return { level: "error", message: `⚠️ [换课失败] ${label} — ${status}` };
+  }
+  if (kind === "added") return { level: "info", message: `[新增] ${label}` };
+  if (kind === "removed") return { level: "info", message: `[移除] ${label}` };
+  if (kind === "conflict_skipped") {
+    return {
+      level: "warn",
+      message: `[跳过换课·时间冲突] ${label} — 与「${String(record.conflict_group || "?")}」组冲突: ${String(record.detail || "")}`,
+    };
+  }
+  if (kind === "schedule_unknown_skip") {
+    return { level: "warn", message: `[跳过换课·时间未知] ${label} — 无法确认冲突，保守跳过` };
+  }
+  const changes = record.changes;
+  if (changes && typeof changes === "object") {
+    const parts = Object.entries(changes as Record<string, [unknown, unknown]>).map(
+      ([field, pair]) => `${changeFieldLabels[field] || field} ${pair?.[0]}→${pair?.[1]}`,
+    );
+    return { level: "info", message: `[变动] ${label} ${parts.join(", ")}` };
+  }
+  return { level: "info", message: `${kind ? `[${kind}] ` : ""}${label}`.trim() };
+}
+
+function inferLevel(text: string): LogLevel {
+  if (text.startsWith("$ ")) return "debug";
+  const exit = text.match(/^exit=(.+)$/);
+  if (exit) return exit[1] === "0" ? "info" : exit[1] === "-" ? "warn" : "error";
+  if (text.includes("Traceback (most recent call last)")) return "error";
+  if (/\b(ERROR|CRITICAL|FAILED)\b/.test(text) || text.includes("失败") || text.includes("错误")) return "error";
+  if (/\bWARN(ING)?\b/.test(text) || text.includes("警告")) return "warn";
+  return "info";
+}
+
+export function parseLogLine(source: string, text: string, fallbackTime = ""): ParsedLogLine {
+  const line = text.trim();
+  const stamped = line.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})(?:[,.]\d+)?\s+(.*)$/s);
+  const time = stamped ? stamped[2] : fallbackTime;
+  const rest = stamped ? stamped[3] : line;
+  const logging = rest.match(/^(DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL)\s+(?:\[([^\]]+)\]\s*)?(.*)$/s);
+  if (logging) {
+    return {
+      time,
+      level: levelTokens[logging[1]],
+      source: logging[2] || source,
+      message: logging[3] || rest,
+    };
+  }
+  if (rest.startsWith("{")) {
+    try {
+      const record = JSON.parse(rest) as Record<string, unknown>;
+      const formatted = formatChangeRecord(record);
+      return { time, source, ...formatted };
+    } catch {
+      // Not JSON after all; fall through to the plain-text heuristics.
+    }
+  }
+  return { time, level: inferLevel(rest), source, message: rest };
+}
+
 function rawSchedule(course: CourseRow | undefined): string | null {
   if (!course) return null;
   return course.sksj || course.schedule.join("\n") || null;
