@@ -8,7 +8,7 @@ param(
 
   [string]$ReleaseDir = "src-tauri/target/release",
 
-  [string]$OutputPath = "src-tauri/target/release/bundle/msix/交我选.msix",
+  [string]$OutputPath = "src-tauri/target/release/bundle/msix/SJTU-Monitor.msix",
 
   [string]$CertificatePath,
 

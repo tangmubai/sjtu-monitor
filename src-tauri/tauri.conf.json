@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "交我选",
+  "productName": "SJTU-Monitor",
   "version": "0.5.1",
-  "identifier": "com.tangmubai.sjtu-monitor",
+  "identifier": "com.sj-tu.sjtu-monitor",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://127.0.0.1:1420",
@@ -27,6 +27,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "publisher": "sj-tu.com",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
