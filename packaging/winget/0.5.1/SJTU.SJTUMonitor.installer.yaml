@@ -1,0 +1,24 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+PackageIdentifier: SJTU.SJTUMonitor
+PackageVersion: 0.5.1
+InstallerType: wix
+Scope: machine
+InstallerLocale: zh-CN
+InstallModes:
+  - interactive
+  - silent
+  - silentWithProgress
+UpgradeBehavior: install
+Installers:
+  - Architecture: x64
+    # 确认实际发布到 GitHub Release 的 MSI 文件名后再定稿。Tauri(WiX)默认命名为
+    # {productName}_{version}_{arch}_{wixLanguage}.msi;当前 wix.language=zh-CN。
+    InstallerUrl: https://github.com/tangmubai/sjtu-monitor/releases/download/v0.5.1/SJTU-Monitor_0.5.1_x64_zh-CN.msi
+    # 必填:构建出 MSI 后计算,或让 wingetcreate 自动填。
+    # PowerShell: (Get-FileHash .\SJTU-Monitor_0.5.1_x64_zh-CN.msi -Algorithm SHA256).Hash
+    InstallerSha256: REPLACE_WITH_SHA256_OF_THE_MSI
+    # 可选但推荐:从构建出的 MSI 读取 ProductCode,winget 用它做安装/升级检测。
+    # PowerShell(需 msi 工具或):见 docs/winget.md。UpgradeCode 稳定、ProductCode 每版可变。
+    # ProductCode: '{XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}'
+ManifestType: installer
+ManifestVersion: 1.6.0
