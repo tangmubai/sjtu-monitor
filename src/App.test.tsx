@@ -173,6 +173,27 @@ describe("first-run onboarding", () => {
     expect(startProcess).toHaveBeenCalledWith("bootstrap", "bootstrap.py", [], false);
   });
 
+  it("previews the workbench offline via demo mode without any backend calls", async () => {
+    snapshot.onboarding = { completed: false, has_account: false, catalog_ready: false };
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "连接 JAccount" });
+    await user.click(screen.getByRole("button", { name: "以演示模式预览" }));
+
+    // Full workbench renders from bundled sample data, no login required.
+    await screen.findByRole("heading", { name: "当前用户" });
+    expect(screen.getByText("演示模式 · 数据均为示例，联网、换课与写入操作已禁用，仅用于界面预览")).toBeInTheDocument();
+    expect(screen.getAllByText("示例同学").length).toBeGreaterThan(0);
+    // Demo mode must never reach the Python bridge for account/network work.
+    expect(saveSettings).not.toHaveBeenCalled();
+    expect(startProcess).not.toHaveBeenCalled();
+
+    // Exiting demo returns to the real onboarding flow.
+    await user.click(screen.getByRole("button", { name: "退出演示" }));
+    await screen.findByRole("heading", { name: "连接 JAccount" });
+  });
+
   it("finishes setup only after a catalog is available", async () => {
     snapshot.onboarding = { completed: false, has_account: true, catalog_ready: true };
     const user = userEvent.setup();

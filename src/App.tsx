@@ -86,6 +86,7 @@ import {
   parseLogLine,
   sortCourses,
 } from "./courseLogic";
+import { demoSnapshot } from "./demo";
 
 type Page = "overview" | "courses" | "swap" | "snapshot" | "logs" | "settings";
 type ThemeMode = "light" | "dark";
@@ -235,6 +236,7 @@ function App() {
   const [newGroupOpen, setNewGroupOpen] = useState(false);
   const [savedGroupsSignature, setSavedGroupsSignature] = useState("");
   const [onboardingStep, setOnboardingStep] = useState<1 | 2 | 3>(1);
+  const [demoMode, setDemoMode] = useState(false);
 
   const groupsSignature = JSON.stringify(
     groups.map((group) => ({
@@ -270,28 +272,74 @@ function App() {
     return () => media.removeEventListener?.("change", onChange);
   }, []);
 
-  async function refresh() {
+  function applySnapshot(data: Snapshot) {
+    setSnapshot(data);
+    const nextGroups = cloneGroups(data.groups);
+    setGroups(nextGroups);
+    setSavedGroupsSignature(JSON.stringify(
+      nextGroups.map((group) => ({
+        name: group.name,
+        is_pe: group.is_pe,
+        priority: group.priority,
+      })),
+    ));
+    setSettings(data.settings);
+    setSelectedGroup((current) => current || data.groups[0]?.name || "");
+  }
+
+  async function loadReal() {
     setBusy(true);
     try {
       const data = await loadSnapshot();
-      setSnapshot(data);
-      const nextGroups = cloneGroups(data.groups);
-      setGroups(nextGroups);
-      setSavedGroupsSignature(JSON.stringify(
-        nextGroups.map((group) => ({
-          name: group.name,
-          is_pe: group.is_pe,
-          priority: group.priority,
-        })),
-      ));
-      setSettings(data.settings);
-      setSelectedGroup((current) => current || data.groups[0]?.name || "");
+      applySnapshot(data);
       setStatus(`已刷新 ${data.generated_at}`);
     } catch (error) {
       setStatus(String(error));
     } finally {
       setBusy(false);
     }
+  }
+
+  async function refresh() {
+    if (demoMode) {
+      applySnapshot(demoSnapshot);
+      setStatus("演示模式：以下均为示例数据，联网与写入操作已禁用");
+      return;
+    }
+    await loadReal();
+  }
+
+  const DEMO_BLOCKED = "演示模式：仅用于界面预览，联网与写入操作已禁用";
+
+  // Returns true (and surfaces a hint) when an action must be short-circuited
+  // because we are in offline demo mode. Guards every network/persist action.
+  function blockInDemo() {
+    if (!demoMode) return false;
+    setStatus(DEMO_BLOCKED);
+    return true;
+  }
+
+  function resetSelection() {
+    setSelectedGroup("");
+    setSelectedCourses(new Set());
+    setActiveCourse("");
+    setSelectedMember("");
+  }
+
+  function enterDemo() {
+    resetSelection();
+    setDemoMode(true);
+    applySnapshot(demoSnapshot);
+    setPage("overview");
+    setStatus("演示模式：以下均为示例数据，联网与写入操作已禁用");
+  }
+
+  function exitDemo() {
+    resetSelection();
+    setDemoMode(false);
+    setSnapshot(null);
+    setStatus("正在退出演示模式，读取本地状态");
+    void loadReal();
   }
 
   useEffect(() => {
@@ -424,6 +472,7 @@ function App() {
   }, [snapshot, stateFilter]);
 
   async function run(label: string, script: string, args: string[] = []) {
+    if (blockInDemo()) return;
     try {
       await startProcess(label, script, args, debug && !RELEASE_MODE);
       setRunning((current) => new Set(current).add(label));
@@ -491,6 +540,7 @@ function App() {
   }
 
   async function persistGroups() {
+    if (blockInDemo()) return;
     setBusy(true);
     try {
       const result = await saveGroups(groups);
@@ -519,6 +569,7 @@ function App() {
   }
 
   async function persistSettings() {
+    if (blockInDemo()) return;
     setBusy(true);
     try {
       await saveSettings(settings);
@@ -532,6 +583,7 @@ function App() {
   }
 
   async function sendTestEmail() {
+    if (blockInDemo()) return;
     setBusy(true);
     setStatus("正在保存设置并发送测试邮件...");
     try {
@@ -547,6 +599,7 @@ function App() {
   }
 
   async function saveOnboardingAccount() {
+    if (blockInDemo()) return;
     if (!settings.jaccount_user.trim()) {
       setStatus("请输入 JAccount 账号");
       return;
@@ -569,6 +622,7 @@ function App() {
   }
 
   async function finishOnboarding() {
+    if (blockInDemo()) return;
     setBusy(true);
     try {
       await completeOnboarding();
@@ -583,6 +637,7 @@ function App() {
   }
 
   async function toggleAutoSwap(enabled: boolean, dryRun: boolean) {
+    if (blockInDemo()) return;
     if (RELEASE_MODE && dryRun) {
       setStatus("发行版不提供演练模式");
       return;
@@ -626,7 +681,14 @@ function App() {
                 <Field label="JAccount" value={settings.jaccount_user} onChange={(value) => setSettings({ ...settings, jaccount_user: value })} />
                 <Field label="JAccount 密码" type="password" value={settings.jaccount_pass} placeholder={settings.has_jaccount_pass ? "已安全保存，留空不修改" : "请输入密码"} onChange={(value) => setSettings({ ...settings, jaccount_pass: value })} />
               </div>
-              <div className="onboardingActions"><Button onClick={saveOnboardingAccount} disabled={busy}><Save />保存并继续</Button></div>
+              <p className="onboardingNote">
+                本应用面向上海交通大学在校师生，需使用学校统一分配的 JAccount 登录，账号申领与说明见官方网站 jaccount.sjtu.edu.cn。
+                非交大用户无法获取账号，可点击“以演示模式预览”查看示例数据与全部界面。
+              </p>
+              <div className="onboardingActions split">
+                <Button variant="outline" onClick={enterDemo}><Eye />以演示模式预览</Button>
+                <Button onClick={saveOnboardingAccount} disabled={busy}><Save />保存并继续</Button>
+              </div>
             </div>
           )}
 
@@ -718,8 +780,20 @@ function App() {
           </div>
         </header>
 
+        {demoMode && (
+          <div className="demoBanner" role="status">
+            <span>演示模式 · 数据均为示例，联网、换课与写入操作已禁用，仅用于界面预览</span>
+            <Button variant="outline" size="sm" onClick={exitDemo}>退出演示</Button>
+          </div>
+        )}
+
         {!snapshot ? (
-          <section className="emptyState">正在载入本地状态...</section>
+          <section className="emptyState">
+            <p>正在载入本地状态...</p>
+            {!demoMode && (
+              <Button variant="outline" onClick={enterDemo}><Eye />以演示模式预览</Button>
+            )}
+          </section>
         ) : (
           <>
             {page === "overview" && (
@@ -745,7 +819,7 @@ function App() {
                   releaseMode={RELEASE_MODE}
                   onRunOnce={() => run("once", "monitor.py", ["--once"])}
                   onStart={() => run("monitor", "monitor.py")}
-                  onStop={() => stopProcess("monitor")}
+                  onStop={() => { if (!blockInDemo()) stopProcess("monitor"); }}
                 />
                 <div className="metrics">
                   <Metric title="查询课程" value={snapshot.metrics.queries} />
