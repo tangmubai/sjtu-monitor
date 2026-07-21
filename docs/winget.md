@@ -28,24 +28,39 @@ winget install "交我选" --source msstore
 manifests/s/SJTU/SJTUMonitor/<版本>/
 ```
 
-### 定稿前必须填的两处
+### 托管位置
 
-发布 MSI 之前无法确定，需在 GitHub Release 出现 MSI 后补齐 `installer.yaml`：
+安装包托管在 **Cloudflare R2**（bucket `sjtu-monitor-dl`），通过自定义域
+`dl.sj-tu.com` 对外提供，非 GitHub Release。0.5.1 的 InstallerUrl：
 
-1. **InstallerUrl**：核对实际的 MSI 资产名。Tauri（WiX）默认命名为
-   `{productName}_{version}_{arch}_{wixLanguage}.msi`，当前配置下应为
-   `SJTU-Monitor_0.5.1_x64_zh-CN.msi`。
-2. **InstallerSha256**：
+```
+https://dl.sj-tu.com/sjtu-monitor/v0.5.1/SJTU-Monitor_0.5.1_x64_zh-CN.msi
+```
+
+`0.5.1/installer.yaml` 已按此地址填好真实值（已联网核对：HTTP 200、字节数与本地一致）：
+
+- InstallerSha256 `711090EF17BFE55A08BA107B426D22C8133F1E3C166C7C5AC2B7E2FF066DFFAD`
+- ProductCode `{58060820-0F0C-4A48-A235-C90013261F1E}`
+- UpgradeCode `{CABD77EB-6E5A-5C98-B84E-BCB9FCE36031}`（跨版本升级检测用）
+
+### 发新版本时如何刷新这些值
+
+每次发布新 MSI（上传到 R2 的 `v<版本>/` 路径）后：
+
+1. **InstallerSha256**：
    ```powershell
-   (Get-FileHash .\SJTU-Monitor_0.5.1_x64_zh-CN.msi -Algorithm SHA256).Hash
+   (Get-FileHash .\SJTU-Monitor_<版本>_x64_zh-CN.msi -Algorithm SHA256).Hash
    ```
-3. **ProductCode（可选但推荐，利于升级检测）**：从构建出的 MSI 读取
+2. **ProductCode**（每版可能变；UpgradeCode 稳定不变）：
    ```powershell
-   $installer = New-Object -ComObject WindowsInstaller.Installer
-   $db = $installer.OpenDatabase("SJTU-Monitor_0.5.1_x64_zh-CN.msi", 0)
-   $view = $db.OpenView("SELECT Value FROM Property WHERE Property='ProductCode'")
-   $view.Execute(); $rec = $view.Fetch(); $rec.StringData(1)
+   $i = New-Object -ComObject WindowsInstaller.Installer
+   $db = $i.OpenDatabase("SJTU-Monitor_<版本>_x64_zh-CN.msi", 0)
+   $v = $db.OpenView("SELECT Value FROM Property WHERE Property='ProductCode'")
+   $v.Execute(); $v.Fetch().StringData(1)
    ```
+   注意 MSI 内部 `ProductVersion` 必须与文件名/URL 的版本一致，否则用户在
+   「已安装程序」里看到的版本会对不上（发布前先 `pwsh scripts/check-release-version.ps1`
+   确保源码三处版本号已同步）。
 
 ### 推荐用 wingetcreate 自动完成（会让你下载外部工具）
 
@@ -54,9 +69,9 @@ manifests/s/SJTU/SJTUMonitor/<版本>/
 ```powershell
 winget install Microsoft.WingetCreate
 # 新建（交互式补全元数据，自动算哈希）：
-wingetcreate new https://github.com/tangmubai/sjtu-monitor/releases/download/v0.5.1/SJTU-Monitor_0.5.1_x64_zh-CN.msi
+wingetcreate new https://dl.sj-tu.com/sjtu-monitor/v0.5.1/SJTU-Monitor_0.5.1_x64_zh-CN.msi
 # 或基于本仓库现有 manifest 更新到新版本 URL：
-wingetcreate update SJTU.SJTUMonitor --version 0.5.1 --urls <MSI_URL>
+wingetcreate update SJTU.SJTUMonitor --version 0.5.1 --urls https://dl.sj-tu.com/sjtu-monitor/v0.5.1/SJTU-Monitor_0.5.1_x64_zh-CN.msi
 # 本地校验并在沙盒试装：
 winget validate --manifest packaging/winget/0.5.1
 winget install --manifest packaging/winget/0.5.1
