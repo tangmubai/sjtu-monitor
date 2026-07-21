@@ -2,7 +2,7 @@
 name = "sjtu-monitor-desktop"
 version = "0.5.1"
 description = "Tauri desktop shell for SJTU Monitor"
-authors = ["Mubai Tang"]
+authors = ["sj-tu.com"]
 edition = "2021"
 
 [lib]
