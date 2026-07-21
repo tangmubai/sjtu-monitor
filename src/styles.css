@@ -256,6 +256,15 @@ button, input, select, .listRow, .modernCourseRow, .priorityRow {
 .setupRules p { display: flex; align-items: center; gap: 10px; line-height: 1.5; }
 .setupRules svg { flex: 0 0 auto; color: var(--primary); }
 .onboardingStatus { margin-top: auto; padding-top: 24px; color: var(--text-muted); font-size: 12px; }
+.onboardingNote {
+  padding: 13px 15px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-row);
+  background: var(--badge-secondary-bg);
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
 
 .appBadge { border-color: var(--badge-secondary-border); background: var(--badge-secondary-bg); color: var(--badge-secondary-text); }
 .appBadge[data-variant="default"] { border-color: var(--badge-default-border); background: var(--badge-default-bg); color: var(--badge-default-text); }
@@ -898,7 +907,22 @@ nav button:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; 
 .buttonRow > button.danger { color: #fff; border-color: var(--destructive); background: var(--destructive); }
 .buttonRow > button.danger:hover { background: color-mix(in srgb, var(--destructive) 88%, #000000); border-color: color-mix(in srgb, var(--destructive) 88%, #000000); }
 
-.emptyState { min-height: 320px; display: grid; place-items: center; color: var(--text-muted); }
+.emptyState { min-height: 320px; display: flex; flex-direction: column; gap: 16px; align-items: center; justify-content: center; color: var(--text-muted); }
+.demoBanner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin: 0 0 18px;
+  padding: 11px 16px;
+  border: 1px solid var(--badge-default-border);
+  border-radius: var(--radius-row);
+  background: var(--badge-default-bg);
+  color: var(--badge-default-text);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.demoBanner span { min-width: 0; }
 .bootError { min-height: 100vh; padding: 28px; color: #7f1d1d; background: #fff5f5; }
 .bootError h1 { margin-bottom: 14px; }
 .bootError pre { padding: 14px; border: 1px solid #fecaca; border-radius: var(--radius-row); background: #fff; white-space: pre-wrap; word-break: break-word; }

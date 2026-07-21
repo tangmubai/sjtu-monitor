@@ -11,6 +11,21 @@ use std::{
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 
+/// Suppress the console window for spawned console helpers (Python) on Windows
+/// via CREATE_NO_WINDOW. No-op on other platforms.
+fn hide_console_window(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = command;
+    }
+}
+
 #[derive(Default)]
 struct ProcessStore {
     children: Mutex<HashMap<String, Child>>,
@@ -220,8 +235,8 @@ fn run_backend(app: &AppHandle, command: &str, payload: Option<Value>) -> Result
     let backend = resolve_backend(app)?;
     let mut args = backend.base_args("gui_backend.py");
     args.push(command.to_string());
-    let mut child = Command::new(&backend.program)
-        .args(args)
+    let mut cmd = Command::new(&backend.program);
+    cmd.args(args)
         .current_dir(&backend.data_dir)
         .env("PYTHONUTF8", "1")
         .env("PYTHONIOENCODING", "utf-8:strict")
@@ -234,7 +249,9 @@ fn run_backend(app: &AppHandle, command: &str, payload: Option<Value>) -> Result
             Stdio::null()
         })
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    hide_console_window(&mut cmd);
+    let mut child = cmd
         .spawn()
         .map_err(|err| format!("failed to start Python backend: {err}"))?;
 
@@ -323,8 +340,8 @@ fn start_process(
         args.push("--debug".to_string());
     }
 
-    let mut child = Command::new(&backend.program)
-        .args(args)
+    let mut cmd = Command::new(&backend.program);
+    cmd.args(args)
         .current_dir(&backend.data_dir)
         .env("PYTHONUTF8", "1")
         .env("PYTHONIOENCODING", "utf-8:strict")
@@ -332,7 +349,9 @@ fn start_process(
         .env("SJTU_MONITOR_DATA_DIR", &backend.data_dir)
         .env("SJTU_MONITOR_RELEASE", if release_mode() { "1" } else { "0" })
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    hide_console_window(&mut cmd);
+    let mut child = cmd
         .spawn()
         .map_err(|err| format!("failed to start {}: {err}", input.label))?;
 

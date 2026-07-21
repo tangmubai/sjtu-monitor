@@ -36,3 +36,4 @@ node_modules
 src-tauri/resources/
 build/
 secrets.local.json
+/site
