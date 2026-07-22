@@ -239,7 +239,7 @@ def fetch_pe_catalog(session: requests.Session) -> list[dict]:
 def _save_catalog(catalog: dict) -> None:
     tmp = config.CATALOG_FILE.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(catalog, ensure_ascii=False, indent=2), "utf-8")
-    tmp.replace(config.CATALOG_FILE)
+    config.replace_atomic(tmp, config.CATALOG_FILE)
 
 
 def apply_user_info(page_params: dict[str, str], xsxx: dict) -> None:
@@ -370,7 +370,7 @@ def _load_seat_details() -> dict:
 def _save_seat_details(details: dict) -> None:
     tmp = config.SEAT_DETAILS_FILE.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(details, ensure_ascii=False, indent=2), "utf-8")
-    tmp.replace(config.SEAT_DETAILS_FILE)
+    config.replace_atomic(tmp, config.SEAT_DETAILS_FILE)
 
 
 def refresh_seat_details(
@@ -466,7 +466,7 @@ def _load_ratings() -> dict:
 def _save_ratings(ratings: dict) -> None:
     tmp = config.RATINGS_FILE.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(ratings, ensure_ascii=False, indent=2), "utf-8")
-    tmp.replace(config.RATINGS_FILE)
+    config.replace_atomic(tmp, config.RATINGS_FILE)
 
 
 def _first_teacher_name(course: dict) -> str | None:

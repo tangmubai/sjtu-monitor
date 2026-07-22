@@ -332,7 +332,7 @@ def _load_capacity_cache() -> dict[str, dict]:
 def _save_capacity_cache(cache: dict) -> None:
     tmp = config.ZZXK_CAPACITY_FILE.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(cache, ensure_ascii=False, indent=2), "utf-8")
-    tmp.replace(config.ZZXK_CAPACITY_FILE)
+    config.replace_atomic(tmp, config.ZZXK_CAPACITY_FILE)
 
 
 def _cache_needs_refresh(jxb_id: str, cache: dict) -> bool:

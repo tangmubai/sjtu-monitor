@@ -129,7 +129,7 @@ def _windows_set(name: str, value: str) -> None:
     data[name] = _windows_protect(value)
     tmp = WINDOWS_SECRET_FILE.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), "utf-8")
-    tmp.replace(WINDOWS_SECRET_FILE)
+    apppaths.replace_atomic(tmp, WINDOWS_SECRET_FILE)
 
 
 def _macos_get(name: str) -> str:

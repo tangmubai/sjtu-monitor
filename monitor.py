@@ -123,7 +123,7 @@ def load_state() -> dict[str, dict]:
 def save_state(state: dict[str, dict]) -> None:
     tmp = config.STATE_FILE.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2), "utf-8")
-    tmp.replace(config.STATE_FILE)
+    config.replace_atomic(tmp, config.STATE_FILE)
 
 
 def _to_int(v) -> int | None:
@@ -260,7 +260,7 @@ def _load_swap_state() -> dict:
 def _save_swap_state(state: dict) -> None:
     tmp = config.SWAP_STATE_FILE.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2), "utf-8")
-    tmp.replace(config.SWAP_STATE_FILE)
+    config.replace_atomic(tmp, config.SWAP_STATE_FILE)
 
 
 def _conflict_with_other_groups(

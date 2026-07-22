@@ -1,4 +1,5 @@
 import unittest
+import errno
 import os
 import tempfile
 from pathlib import Path
@@ -164,6 +165,55 @@ class ReleaseInitializationTests(unittest.TestCase):
                 (root / "state.json").write_text("keep", "utf-8")
                 apppaths.prepare_release_data(root)
                 self.assertEqual((root / "state.json").read_text("utf-8"), "keep")
+
+
+class CrossDeviceReplaceTests(unittest.TestCase):
+    """os.replace 在被迁到别的盘/被虚拟化的 %APPDATA% 上会抛 WinError 17
+    (ERROR_NOT_SAME_DEVICE) / POSIX EXDEV。replace_atomic 必须退化为复制,
+    prepare_release_data 更不能因此在后端启动时崩溃。"""
+
+    @staticmethod
+    def _winerror(code):
+        err = OSError("系统无法将文件移到不同的磁盘驱动器。")
+        err.winerror = code
+        return err
+
+    def test_replace_atomic_falls_back_on_cross_device_error(self):
+        for label, exc in (
+            ("winerror17", self._winerror(17)),
+            ("exdev", OSError(errno.EXDEV, "cross-device link")),
+        ):
+            with self.subTest(label=label):
+                with tempfile.TemporaryDirectory() as temp:
+                    root = Path(temp)
+                    src = root / "state.json.tmp"
+                    src.write_text("payload", "utf-8")
+                    dst = root / "state.json"
+                    with patch("apppaths.os.replace", side_effect=exc):
+                        apppaths.replace_atomic(src, dst)
+                    self.assertEqual(dst.read_text("utf-8"), "payload")
+                    self.assertFalse(src.exists())
+
+    def test_replace_atomic_reraises_unrelated_oserror(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            src = root / "x.tmp"
+            src.write_text("payload", "utf-8")
+            with patch("apppaths.os.replace", side_effect=OSError(errno.EACCES, "denied")):
+                with self.assertRaises(OSError):
+                    apppaths.replace_atomic(src, root / "x.json")
+
+    def test_prepare_release_data_survives_broken_filesystem(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "catalog.json").write_text("old", "utf-8")
+            with patch.dict(os.environ, {"SJTU_MONITOR_RELEASE": "1"}), \
+                 patch("apppaths.os.replace", side_effect=self._winerror(17)), \
+                 patch("apppaths.shutil.copyfile", side_effect=OSError(errno.EIO, "io error")):
+                # 即使原子替换和复制兜底都失败,也绝不能抛出(否则后端启动即崩溃)。
+                result = apppaths.prepare_release_data(root)
+            self.assertEqual(result, root)
+            self.assertFalse((root / "catalog.json").exists())
 
 
 if __name__ == "__main__":

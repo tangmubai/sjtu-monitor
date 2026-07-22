@@ -7,6 +7,10 @@ from dotenv import load_dotenv
 import apppaths
 import secure_store
 
+# 跨卷安全的“写 .tmp 再替换”,供 monitor/bootstrap/zzxk 等经 config 复用
+# (避免各模块再单独 import apppaths)。见 apppaths.replace_atomic。
+replace_atomic = apppaths.replace_atomic
+
 ROOT = Path(__file__).resolve().parent
 # 运行期可写数据目录:源码运行/测试时 == ROOT(行为不变);打包成独立程序后
 # 指向用户级目录(见 apppaths.py),避免装到 Program Files 下写不进状态文件。
@@ -182,7 +186,7 @@ def load_priority_groups() -> dict[str, dict]:
 def save_user_settings(settings: dict) -> None:
     tmp = USER_SETTINGS_FILE.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(settings, ensure_ascii=False, indent=2), "utf-8")
-    tmp.replace(USER_SETTINGS_FILE)
+    replace_atomic(tmp, USER_SETTINGS_FILE)
 
 
 def update_user_settings(**sections) -> None:
@@ -374,7 +378,7 @@ def save_env_settings(values: dict[str, str], path: Path | None = None) -> None:
     output.extend(f"{key}={_quote_env_value(value)}" for key, value in pending.items())
     tmp = env_path.with_suffix(env_path.suffix + ".tmp")
     tmp.write_text("\n".join(output) + "\n", "utf-8")
-    tmp.replace(env_path)
+    replace_atomic(tmp, env_path)
 
     for key, value in values.items():
         if key in SECRET_ENV_KEYS and not value:
