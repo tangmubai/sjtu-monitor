@@ -1,6 +1,6 @@
 [package]
 name = "sjtu-monitor-desktop"
-version = "0.5.1"
+version = "0.5.2"
 description = "Tauri desktop shell for SJTU Monitor"
 authors = ["sj-tu.com"]
 edition = "2021"

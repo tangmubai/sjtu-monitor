@@ -1,7 +1,7 @@
 {
   "name": "sjtu-monitor-desktop",
   "private": true,
-  "version": "0.5.1",
+  "version": "0.5.2",
   "type": "module",
   "scripts": {
     "dev": "npm run build && node scripts/static-dev.mjs",
